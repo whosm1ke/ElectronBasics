@@ -34,6 +34,12 @@ export const state = {
   groups: [],
   editingGroupId: null, // null = "new group" mode in the group editor, otherwise the id being edited
 
+  // Last-known update-check status ({status: 'idle'|'checking'|'available'|...}
+  // plus whatever extra fields that status carries) — kept here (not just
+  // local to settings-modal.js) so reopening Settings mid-download restores
+  // the right UI instead of resetting to "Check for updates" every time.
+  updateStatus: { status: 'idle' },
+
   // Appearance / behavior settings (all local to this device)
   theme: localStorage.getItem('snippetRunner.theme') || 'system',
   accentColor: localStorage.getItem('snippetRunner.accent') || null,

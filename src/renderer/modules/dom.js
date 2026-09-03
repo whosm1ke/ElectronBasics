@@ -112,6 +112,7 @@ export const dom = {
   groupEditorView: byId('groupEditorView'),
   groupEditorTitle: byId('groupEditorTitle'),
   groupNameInput: byId('groupNameInput'),
+  groupDescriptionInput: byId('groupDescriptionInput'),
   groupSnippetChecklist: byId('groupSnippetChecklist'),
   deleteGroupBtn: byId('deleteGroupBtn'),
   cancelGroupEditBtn: byId('cancelGroupEditBtn'),
@@ -140,6 +141,15 @@ export const dom = {
   soundToggle: byId('soundToggle'),
   notificationsToggle: byId('notificationsToggle'),
   devModeToggle: byId('devModeToggle'),
+
+  // Updates
+  appVersionLabel: byId('appVersionLabel'),
+  checkUpdateBtn: byId('checkUpdateBtn'),
+  updateStatusText: byId('updateStatusText'),
+  updateProgressRow: byId('updateProgressRow'),
+  updateProgressFill: byId('updateProgressFill'),
+  downloadUpdateBtn: byId('downloadUpdateBtn'),
+  restartUpdateBtn: byId('restartUpdateBtn'),
 
   // Toast
   toast: byId('toast'),

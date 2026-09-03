@@ -70,6 +70,7 @@ function groupLink(group) {
   const btn = document.createElement('button');
   btn.className = 'details-link-btn';
   btn.innerHTML = `${iconSvg('layers')} ${group.name || '(untitled group)'}`;
+  if (group.description) btn.title = group.description;
   btn.addEventListener('click', () => {
     dom.detailsOverlay.hidden = true; // hide without closeDetails() — no return-to-details tracking needed here
     openGroupEditor(group);

@@ -29,6 +29,9 @@ export async function openSettings() {
   dom.hotkeyInput.value = hk.active || hk.saved || '';
   dom.hotkeyStatus.textContent = hk.active ? '' : 'No hotkey is currently active — try setting one below.';
 
+  dom.appVersionLabel.textContent = await window.electronAPI.getAppVersion();
+  applyUpdateStatus(state.updateStatus);
+
   loadBackupsList();
 }
 
@@ -242,6 +245,52 @@ dom.importBtn.addEventListener('click', async () => {
   } else if (res.error) {
     showToast(res.error, 'error');
   }
+});
+
+// --- Updates ---
+// Manual, user-triggered only — see updater.js's header comment for why
+// (matches the app's "nothing runs without you clicking it" stance).
+// state.updateStatus is the source of truth so a status change that arrives
+// while Settings is closed (e.g. a slow download finishing) doesn't get
+// lost — applyUpdateStatus() re-renders it from there whenever Settings
+// reopens, not just when the event itself fires.
+function applyUpdateStatus(status) {
+  const { status: kind, message, version, percent } = status;
+  dom.updateProgressRow.hidden = kind !== 'downloading';
+  if (kind === 'downloading') dom.updateProgressFill.style.width = `${percent}%`;
+  dom.downloadUpdateBtn.hidden = kind !== 'available';
+  dom.restartUpdateBtn.hidden = kind !== 'downloaded';
+  dom.checkUpdateBtn.disabled = kind === 'checking' || kind === 'downloading' || kind === 'unsupported';
+
+  dom.updateStatusText.textContent = {
+    idle: '',
+    checking: 'Checking…',
+    'not-available': "You're up to date.",
+    available: `Update available — v${version}`,
+    downloading: `Downloading… ${percent}%`,
+    downloaded: `Update ready — v${version}. Restart to install.`,
+    error: `Update check failed: ${message}`,
+    unsupported: message,
+  }[kind] || '';
+}
+
+window.electronAPI.onUpdateStatus((status) => {
+  state.updateStatus = status;
+  if (isSettingsOpen()) applyUpdateStatus(status);
+});
+
+dom.checkUpdateBtn.addEventListener('click', () => {
+  state.updateStatus = { status: 'checking' };
+  applyUpdateStatus(state.updateStatus);
+  window.electronAPI.checkForUpdates();
+});
+
+dom.downloadUpdateBtn.addEventListener('click', () => {
+  window.electronAPI.downloadUpdate();
+});
+
+dom.restartUpdateBtn.addEventListener('click', () => {
+  window.electronAPI.quitAndInstall();
 });
 
 dom.settingsBtn.addEventListener('click', openSettings);

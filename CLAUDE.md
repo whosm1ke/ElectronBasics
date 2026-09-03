@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-**Snippet Runner** — a local, Windows-only shell snippet launcher in the style of Raycast/Spotlight: a frameless, always-on-top, global-hotkey-activated Electron window for storing, searching, and running one-liners or multi-step sequences across **six shells** (PowerShell, CMD, Git Bash, WSL, Node.js, Python), with run history, tags, pinning, parameterized commands, reusable/environment variables, scheduling, batch runs with live output, run-after chaining, assertions, themeable UI, and automatic backups.
+**Snippet Runner** — a local, Windows-only shell snippet launcher in the style of Raycast/Spotlight: a frameless, always-on-top, global-hotkey-activated Electron window for storing, searching, and running one-liners or multi-step sequences across **six shells** (PowerShell, CMD, Git Bash, WSL, Node.js, Python), with run history, tags, pinning, parameterized commands, reusable/environment variables, saved snippet groups, scheduling, batch runs with live output, run-after chaining, assertions, themeable UI, automatic backups, and self-update from GitHub Releases.
 
 **There is no destructive-command guard anywhere in this app.** An earlier version had one (pattern-matched confirm-click in the UI, re-enforced in the main process, hard-skipped by the scheduler); it was deliberately removed in full — no trace of it should reappear. A command runs exactly when the user triggers it — directly, scheduled, chained, or batched — full stop. If you're asked to add any kind of "is this command dangerous" check back, don't; point back to this file instead.
 
@@ -14,6 +14,8 @@ There is no bundler, no framework, and no build step in either process.
 
 - **Run the app**: `npm start` (runs `electron .`)
 - There is no lint script or test script. `electron-builder` is present as a devDependency with `build`/`build:portable` scripts (`electron-builder --win` / `--win portable`) — packaging works but has no CI wired up.
+- **Cutting a release** (for the in-app updater — see `src/main/updater.js` below): `npm run release`. The version bump is automatic — `release`/`release:minor`/`release:major` each run `npm version <patch|minor|major> --no-git-tag-version` (bumps `package.json`+`package-lock.json`, no git commit/tag) before `electron-builder --win --publish always`, specifically so a forgotten manual version bump can't ship a release electron-updater won't recognize as newer. Default to plain `npm run release` (patch) unless you deliberately want a bigger jump. This needs a `GH_TOKEN`/`GITHUB_TOKEN` env var (a GitHub PAT with at least `public_repo`) set on *this* machine — it uploads the NSIS installer + `latest.yml` to a GitHub Release on this repo (`build.publish` in `package.json`). Installed copies elsewhere need no token to read a public repo's releases; they only ever check/download, never publish. Commit and push the resulting `package.json`/`package-lock.json` version bump afterward so the repo matches what shipped.
+- **`electron-updater` must stay a `dependencies` entry, never `devDependencies`.** `electron-builder` only packs production dependencies into the built app by default — if it's under `devDependencies`, `npm start` still works fine (local `node_modules` has everything either way) but the *installed* app silently ships without it and `require('electron-updater')` throws the moment Settings tries to check for updates. This exact mistake has happened once already; it's an easy one for a package-manager UI or a careless `npm install` to reintroduce.
 - To verify a change without a test suite, actually launch the app (`npm start`) and exercise it. For a quick syntax check first:
   - `src/main/**/*.js` and `src/preload/**/*.js` are plain CommonJS: `node --check <file>`.
   - `src/renderer/modules/*.js` and `src/renderer/app.js` are native ES modules, but `package.json` declares `"type": "commonjs"`, so plain `node --check` can't parse `import`/`export`. Pipe the file through stdin with the module flag instead: `node --input-type=module --check < src/renderer/modules/whatever.js`.
@@ -62,13 +64,14 @@ An earlier version of this app had `DANGEROUS_PATTERNS` duplicated in both the m
 
 ### Snippet data model & storage (`src/main/storage/`)
 
-Snippets and run history are plain JSON files in `app.getPath('userData')` (paths centralized in `paths.js`: `SNIPPETS_FILE`, `HISTORY_FILE`, `APP_SETTINGS_FILE`, `VARIABLES_FILE`, `BACKUPS_DIR`), not a database. `sanitizeSnippet()` in `storage/snippets.js` is the schema's source of truth — it backfills missing fields (so hand-edited or older-schema files don't break the UI) and is applied on both read and write. Current fields: `id, name, tag, command, pinned, runCount, lastRunAt, cwd, shell, elevated, steps, stdin, icon, notes, env, expect, runAfter, schedule`. `command` is always kept populated (joined from `steps` for multi-step snippets) so free-text search has something to match against even for sequences. `env` is `Array<{key,value}>|null` (sanitized by `sanitizeEnvList`, capped at 20 entries) — converted to a plain object via `envListToObject()` (shared by `ipc.js` and `scheduler.js`, in `env-utils.js`) right before being handed to `execFile`'s `env` option, merged on top of `process.env`. `expect` is `{exitCode:number|null, outputContains:string|null}|null` (sanitized by `sanitizeExpect`) — checked entirely client-side in `run-engine.js` (`checkExpectation()`), main.js just stores it. `schedule` is `{enabled,type,intervalMinutes,dailyTime,cronExpr,lastRunAt}|null` (sanitized by `sanitizeSchedule`) — see the scheduler section below.
+Snippets and run history are plain JSON files in `app.getPath('userData')` (paths centralized in `paths.js`: `SNIPPETS_FILE`, `HISTORY_FILE`, `APP_SETTINGS_FILE`, `VARIABLES_FILE`, `GROUPS_FILE`, `BACKUPS_DIR`), not a database. `sanitizeSnippet()` in `storage/snippets.js` is the schema's source of truth — it backfills missing fields (so hand-edited or older-schema files don't break the UI) and is applied on both read and write. Current fields: `id, name, tag, command, pinned, runCount, lastRunAt, cwd, shell, elevated, steps, stdin, icon, notes, env, expect, runAfter, schedule`. `command` is always kept populated (joined from `steps` for multi-step snippets) so free-text search has something to match against even for sequences. `env` is `Array<{key,value}>|null` (sanitized by `sanitizeEnvList`, capped at 20 entries) — converted to a plain object via `envListToObject()` (shared by `ipc.js` and `scheduler.js`, in `env-utils.js`) right before being handed to `execFile`'s `env` option, merged on top of `process.env`. `expect` is `{exitCode:number|null, outputContains:string|null}|null` (sanitized by `sanitizeExpect`) — checked entirely client-side in `run-engine.js` (`checkExpectation()`), main.js just stores it. `schedule` is `{enabled,type,intervalMinutes,dailyTime,cronExpr,lastRunAt}|null` (sanitized by `sanitizeSchedule`) — see the scheduler section below.
 
 `DEFAULT_SNIPPETS` in `storage/snippets.js` seeds a fresh install and must be kept passing through the same field set the sanitizer expects (see the trailing `.map()` on that array).
 
 The other storage modules follow the exact same ensure/read/write pattern — copy that pattern rather than inventing a new one if you add another persisted concern:
 - **`storage/app-settings.js`** (`readAppSettings`/`writeAppSettings`) — currently just `{ hotkey, hasShownTrayHint }`.
 - **`storage/variables.js`** (`readVariables`/`writeVariables`, sanitized by `sanitizeVariable`) — reusable `{id, name, value, secret}` placeholder values. The renderer's `params.js` prefills a parameterized snippet's inline form from these by matching placeholder name to variable name, and quietly writes back an updated value after every run (`syncVariablesFromValues`) — it never auto-creates a variable that didn't already exist, only keeps existing ones fresh.
+- **`storage/groups.js`** (`readGroups`/`writeGroups`, sanitized by `sanitizeGroup`) — named, saved sets of snippets (`{id, name, description, snippetIds}`) you configure once (via `groups-modal.js`'s Groups screen, opened from the header) and run together on demand without reselecting them. Deliberately just a list of ids, not a copy of the snippets themselves, so a group always reflects each member's current command/tag/etc.; an id with nothing behind it (the snippet was deleted) is silently skipped wherever a group is resolved into a runnable list. Running a group hands its resolved snippet list to `batch-runner.js`'s existing order/mode config step — same live per-row output a manually-selected batch or a tag "Run all" gets. `cards.js` shows a small badge on a member snippet's card (and `details-modal.js` a full "Groups" section with links straight into each group's editor) so it's obvious from the snippet itself that it belongs to one.
 - **`storage/backups.js`** — see below.
 
 ### Automatic snippet-library backups (`storage/backups.js`)
@@ -102,7 +105,8 @@ One file per concern, each kept small. The rough map:
 | `batch-runner.js` | the shared "run a list of snippets with live per-row output" engine + the results-modal open/close plumbing |
 | `batch.js` | select-mode UI, the batch bar, and the order/mode config step that hands off to `batch-runner.js` |
 | `editor-modal.js` | the Add/Edit snippet modal, including the schedule-type tabs |
-| `history-drawer.js`, `variables-modal.js`, `settings-modal.js` | their respective modal/drawer |
+| `history-drawer.js`, `variables-modal.js`, `groups-modal.js`, `settings-modal.js` | their respective modal/drawer |
+| `details-modal.js` | the read-only Details panel per snippet (dependencies, schedule, groups, stats) |
 | `tags.js`, `favorites.js` | tag-filter chips and the pinned-favorites bar — both self-register on `onSnippetsChanged` |
 | `menus.js` | the right-click context menu and the "Copy as" dropdown |
 | `keyboard.js` | the one global keydown listener |
@@ -147,6 +151,18 @@ The window hides (never closes) on blur/close/Escape unless `app.isQuitting` was
 
 `registerHotkey(accelerator)` is the only place that calls `globalShortcut.register`/`unregister` — it unregisters whatever's currently active, tries the new one, and rolls back to the previous accelerator on failure (never leaves the app with *no* working hotkey without the caller finding out via its boolean return). At startup, `src/main/index.js` tries the user's saved `appSettings.hotkey` first, then falls through a defaults array. The `set-hotkey` IPC handler (`ipc.js`) is the only thing that persists a new accelerator to `app-settings.json` — a successful *startup* fallback does not overwrite the saved preference, so a combo that's temporarily taken by another app doesn't silently erase what the user actually asked for. (Registration can also fail entirely in some sandboxed/remote-desktop environments — the app still runs, just tray-only, and logs a note about it.)
 
+### Self-update (`src/main/updater.js`)
+
+Wraps `electron-updater`'s `autoUpdater` with `autoDownload`/`autoInstallOnAppQuit` both **off** — check, download, and install/relaunch are three separate, user-triggered actions (Settings → Updates), never something that happens on its own in the background. Same "nothing runs unless you click it" stance as the rest of this app, just applied to the app updating itself instead of a command running.
+
+Update feed is **GitHub Releases on this repo**, configured via `build.publish` in `package.json` (`provider: "github"`, `owner`/`repo` pointing at `whosm1ke/ElectronBasics`) — `electron-builder` writes `latest.yml` (version + installer hash) into the release alongside the NSIS installer whenever a release is published (see the `npm run release` note under **Commands**), and `electron-updater` reads that file to decide whether a newer version exists. Since the repo is public, an installed copy needs no auth to check/download.
+
+`checkForUpdates()` guards on `app.isPackaged` first — running via `npm start` has no `app-update.yml` (that file only exists inside a packaged app's resources, generated from the `publish` config), so calling into `electron-updater` from source throws a confusing low-level error instead of the friendly "updates only work in the installed app" message this checks for up front.
+
+Every `autoUpdater` event (`checking-for-update`, `update-available`, `update-not-available`, `download-progress`, `update-downloaded`, `error`) is forwarded to the renderer over one `update-status` IPC channel rather than being the return value of the `check-for-updates`/`download-update` IPC calls — those calls just kick off the corresponding `electron-updater` call and resolve almost immediately; the actual result arrives later via the event. The renderer keeps the last-received status in `state.updateStatus` (`settings-modal.js`) so reopening Settings mid-download shows where things actually are instead of resetting to "Check for updates."
+
+`quitAndInstall()` explicitly sets `app.isQuitting = true` before calling `autoUpdater.quitAndInstall()` — same defensive pattern as the tray's Quit item (`tray.js`) — because `window.js`'s `close` handler intercepts and just hides the window unless that flag is already set, which would otherwise silently swallow the quit the installer needs.
+
 ## Clean code in this project
 
 This codebase was deliberately refactored from three large files (`main.js`/`preload.js`/`renderer.js`) into the `src/main/`, `src/preload/`, `src/renderer/modules/` layout above specifically to keep files small and single-purpose. When adding or changing code here:
@@ -173,13 +189,14 @@ src/
     icon.js                hand-rolled PNG encoder (tray/window icon, no assets)
     ipc.js                 every ipcMain handler — delegates out, no logic
     scheduler.js           the 30s background tick (interval/daily/cron)
+    updater.js              electron-updater wrapper: manual check/download/install
     paths.js, id.js, ps-quote.js, env-utils.js   small shared leaves
     shell/
       exec.js               the multi-shell execFile engine
       terminal.js            opens a real, visible, interactive terminal window
     storage/
       snippets.js            schema + sanitizer + DEFAULT_SNIPPETS
-      history.js, app-settings.js, variables.js, backups.js
+      history.js, app-settings.js, variables.js, groups.js, backups.js
   preload/
     index.js              contextBridge — the only surface the renderer can reach
   renderer/

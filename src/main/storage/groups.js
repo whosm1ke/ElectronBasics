@@ -18,6 +18,7 @@ function sanitizeGroup(g) {
   return {
     id: String(g.id ?? newId('grp')),
     name: String(g.name ?? '').trim().slice(0, 100),
+    description: String(g.description ?? '').trim().slice(0, 500),
     snippetIds,
   };
 }

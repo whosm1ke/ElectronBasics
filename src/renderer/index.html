@@ -343,6 +343,9 @@
         <label class="field-label" for="groupNameInput">Name</label>
         <input type="text" id="groupNameInput" class="field-input" placeholder="e.g. Morning setup" autocomplete="off" />
 
+        <label class="field-label" for="groupDescriptionInput">Description <span class="field-hint">(optional)</span></label>
+        <textarea id="groupDescriptionInput" class="field-textarea" rows="2" placeholder="What this group is for, when to run it…"></textarea>
+
         <label class="field-label">Snippets in this group</label>
         <div id="groupSnippetChecklist" class="group-snippet-checklist no-scrollbar"></div>
 
@@ -429,6 +432,26 @@
           <input type="checkbox" id="devModeToggle" />
           <span>Developer mode <span class="field-hint">(show the exact command/args sent to the OS for each run)</span></span>
         </label>
+      </div>
+
+      <div class="settings-section">
+        <div class="settings-section-title">Updates</div>
+
+        <p class="field-hint">Version <span id="appVersionLabel">—</span></p>
+
+        <div class="update-row">
+          <button type="button" id="checkUpdateBtn" class="btn btn-small">Check for updates</button>
+          <span id="updateStatusText" class="field-hint"></span>
+        </div>
+
+        <div id="updateProgressRow" class="update-progress-row" hidden>
+          <div class="update-progress-bar"><div id="updateProgressFill" class="update-progress-fill"></div></div>
+        </div>
+
+        <div class="modal-actions modal-actions-left">
+          <button type="button" id="downloadUpdateBtn" class="btn btn-primary btn-small" hidden>Download update</button>
+          <button type="button" id="restartUpdateBtn" class="btn btn-primary btn-small" hidden>Restart &amp; install</button>
+        </div>
       </div>
 
       <div class="settings-section">

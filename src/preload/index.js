@@ -98,4 +98,23 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('window-shown', listener);
     return () => ipcRenderer.removeListener('window-shown', listener);
   },
+
+  /** Reads the running app's version (package.json's `version`, as packaged). */
+  getAppVersion: () => ipcRenderer.invoke('get-app-version'),
+
+  /** Asks the main process to check GitHub Releases for a newer version. No-ops (via an 'unsupported' update-status event) when running from source. Result arrives via onUpdateStatus, not this call's return value. */
+  checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
+
+  /** Downloads an update already reported 'available' via onUpdateStatus. */
+  downloadUpdate: () => ipcRenderer.invoke('download-update'),
+
+  /** Quits and installs an update already reported 'downloaded', then relaunches. */
+  quitAndInstall: () => ipcRenderer.invoke('quit-and-install'),
+
+  /** Subscribes to update-check/download/install progress: {status: 'checking'|'available'|'not-available'|'downloading'|'downloaded'|'error'|'unsupported', ...}. */
+  onUpdateStatus: (callback) => {
+    const listener = (_event, status) => callback(status);
+    ipcRenderer.on('update-status', listener);
+    return () => ipcRenderer.removeListener('update-status', listener);
+  },
 });

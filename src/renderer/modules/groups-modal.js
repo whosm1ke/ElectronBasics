@@ -33,6 +33,7 @@ export function openGroupEditor(group) {
   state.editingGroupId = group ? group.id : null;
   dom.groupEditorTitle.textContent = group ? 'Edit group' : 'New group';
   dom.groupNameInput.value = group ? group.name : '';
+  dom.groupDescriptionInput.value = group ? group.description : '';
   dom.deleteGroupBtn.hidden = !group;
   renderChecklist(new Set(group ? group.snippetIds : []));
   dom.groupsListView.hidden = true;
@@ -79,6 +80,12 @@ function buildGroupRow(group) {
   count.textContent = `${validCount} snippet${validCount === 1 ? '' : 's'}`
     + (validCount < group.snippetIds.length ? ' (some were deleted)' : '');
   info.append(name, count);
+  if (group.description) {
+    const desc = document.createElement('div');
+    desc.className = 'group-row-description';
+    desc.textContent = group.description;
+    info.appendChild(desc);
+  }
 
   const runBtn = document.createElement('button');
   runBtn.className = 'btn btn-small btn-primary';
@@ -146,6 +153,7 @@ dom.cancelGroupEditBtn.addEventListener('click', showGroupsListView);
 
 dom.saveGroupBtn.addEventListener('click', async () => {
   const name = dom.groupNameInput.value.trim() || 'Untitled group';
+  const description = dom.groupDescriptionInput.value.trim();
   const snippetIds = Array.from(dom.groupSnippetChecklist.querySelectorAll('input[type="checkbox"]:checked'))
     .map((cb) => cb.dataset.snippetId);
   if (snippetIds.length === 0) {
@@ -153,7 +161,7 @@ dom.saveGroupBtn.addEventListener('click', async () => {
     return;
   }
   const id = state.editingGroupId || newId('grp');
-  const group = { id, name, snippetIds };
+  const group = { id, name, description, snippetIds };
   const existingIdx = state.groups.findIndex((g) => g.id === id);
   if (existingIdx >= 0) state.groups[existingIdx] = group;
   else state.groups.push(group);

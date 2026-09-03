@@ -11,6 +11,7 @@ const { createTray, maybeShowTrayHint } = require('./tray');
 const { registerHotkey } = require('./hotkey');
 const { registerIpcHandlers } = require('./ipc');
 const { startScheduler } = require('./scheduler');
+const { initUpdater } = require('./updater');
 const { ensureSnippetsFile } = require('./storage/snippets');
 const { ensureHistoryFile } = require('./storage/history');
 const { readAppSettings } = require('./storage/app-settings');
@@ -63,6 +64,7 @@ app.whenReady().then(() => {
 
   maybeShowTrayHint(appSettings, registeredHotkey);
   startScheduler();
+  initUpdater();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow(appIcon);

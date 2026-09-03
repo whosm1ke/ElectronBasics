@@ -1676,6 +1676,33 @@ select.field-input {
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
+/* ---------- Updates ---------- */
+
+.update-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.update-progress-row {
+  margin-top: 10px;
+}
+
+.update-progress-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--surface-active);
+  overflow: hidden;
+}
+
+.update-progress-fill {
+  height: 100%;
+  width: 0%;
+  background: var(--accent);
+  transition: width 0.2s ease;
+}
+
 /* ---------- Settings sections ---------- */
 
 .settings-section {
@@ -1794,6 +1821,15 @@ select.field-input {
   font-size: 11px;
   color: var(--text-tertiary);
   margin-top: 1px;
+}
+
+.group-row-description {
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  margin-top: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .group-snippet-checklist {

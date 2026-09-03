@@ -227,7 +227,9 @@ function buildTitleGroup(snippet) {
   if (memberGroups.length > 0) {
     const groupsBadge = document.createElement('span');
     groupsBadge.className = 'groups-badge';
-    groupsBadge.title = `In group${memberGroups.length > 1 ? 's' : ''}: ${memberGroups.map((g) => g.name || '(untitled group)').join(', ')}`;
+    groupsBadge.title = memberGroups.length === 1
+      ? `In group: ${memberGroups[0].name || '(untitled group)'}${memberGroups[0].description ? ` — ${memberGroups[0].description}` : ''}`
+      : `In groups: ${memberGroups.map((g) => g.name || '(untitled group)').join(', ')}`;
     groupsBadge.innerHTML = iconSvg('layers');
     titleRow.appendChild(groupsBadge);
   }

@@ -19,6 +19,7 @@ const appSettingsStore = require('./storage/app-settings');
 const variablesStore = require('./storage/variables');
 const groupsStore = require('./storage/groups');
 const backupsStore = require('./storage/backups');
+const updater = require('./updater');
 
 function registerIpcHandlers() {
   ipcMain.handle('run-command', async (_event, payload) => {
@@ -215,6 +216,22 @@ function registerIpcHandlers() {
     } catch (err) {
       return { ok: false, error: String(err.message || err) };
     }
+  });
+
+  ipcMain.handle('get-app-version', async () => {
+    return app.getVersion();
+  });
+
+  ipcMain.handle('check-for-updates', async () => {
+    updater.checkForUpdates();
+  });
+
+  ipcMain.handle('download-update', async () => {
+    updater.downloadUpdate();
+  });
+
+  ipcMain.handle('quit-and-install', async () => {
+    updater.quitAndInstall();
   });
 
   ipcMain.on('hide-window', () => {
