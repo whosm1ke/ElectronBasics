@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+<meta charset="UTF-8" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:;" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Snippet Runner</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="app-shell" id="appShell">
+
+    <!-- Search bar -->
+    <header class="search-bar">
+      <svg class="search-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="11" cy="11" r="7"></circle>
+        <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+      </svg>
+      <input
+        type="text"
+        id="searchInput"
+        class="search-input"
+        placeholder="Search snippets by name or tag…"
+        autocomplete="off"
+        spellcheck="false"
+      />
+      <button id="selectModeBtn" class="icon-btn" title="Select multiple (batch run)">
+        <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="9 11 12 14 20 6"></polyline>
+          <path d="M20 12v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9"></path>
+        </svg>
+      </button>
+      <button id="groupViewBtn" class="icon-btn" title="Group by category">
+        <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="3" y="3" width="7" height="7" rx="1.5"></rect>
+          <rect x="14" y="3" width="7" height="7" rx="1.5"></rect>
+          <rect x="3" y="14" width="7" height="7" rx="1.5"></rect>
+          <rect x="14" y="14" width="7" height="7" rx="1.5"></rect>
+        </svg>
+      </button>
+      <button id="groupsBtn" class="icon-btn" title="Groups — saved sets of snippets you run together">
+        <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2">
+          <polygon points="12 3 3 8 12 13 21 8 12 3"></polygon>
+          <polyline points="3 16 12 21 21 16"></polyline>
+          <polyline points="3 12 12 17 21 12"></polyline>
+        </svg>
+      </button>
+      <button id="historyBtn" class="icon-btn" title="Run history (Ctrl+H)">
+        <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="9"></circle>
+          <polyline points="12 7 12 12 15.5 14"></polyline>
+        </svg>
+      </button>
+      <button id="settingsBtn" class="icon-btn" title="Settings">
+        <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="3"></circle>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+        </svg>
+      </button>
+      <button id="addBtn" class="icon-btn" title="Add snippet (Ctrl+N)">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="12" y1="5" x2="12" y2="19"></line>
+          <line x1="5" y1="12" x2="19" y2="12"></line>
+        </svg>
+      </button>
+    </header>
+
+    <!-- Favorites bar: one-click access to pinned snippets, independent of filters -->
+    <div class="favorites-bar no-scrollbar" id="favoritesBar" hidden></div>
+
+    <!-- Batch-select action bar (shown while in select mode) -->
+    <div class="batch-bar" id="batchBar" hidden>
+      <span id="batchCount">0 selected</span>
+      <span class="hint-spacer"></span>
+      <button id="batchClearBtn" class="btn btn-ghost btn-small">Clear</button>
+      <button id="batchRunBtn" class="btn btn-primary btn-small">Configure &amp; run…</button>
+    </div>
+
+    <!-- Tag filter chips + sort mode -->
+    <div class="tag-filters-row" id="tagFiltersRow">
+      <div class="tag-filters" id="tagFilters"></div>
+      <div class="select-wrap">
+        <select id="sortModeSelect" class="sort-select" title="Sort order">
+          <option value="manual">Pinned first</option>
+          <option value="az">A–Z</option>
+          <option value="most-used">Most used</option>
+          <option value="recent">Recently run</option>
+        </select>
+        <svg class="select-chevron select-chevron-sort" viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"></polyline></svg>
+      </div>
+    </div>
+
+    <!-- Snippet list -->
+    <main class="snippet-list no-scrollbar" id="snippetList">
+      <!-- Cards injected by cards.js -->
+    </main>
+
+    <div class="empty-state" id="emptyState" hidden>
+      <p>No snippets match your search.</p>
+    </div>
+
+    <!-- Footer hint bar -->
+    <footer class="hint-bar">
+      <span><kbd>Esc</kbd> Hide</span>
+      <span><kbd>Enter</kbd> Run</span>
+      <span><kbd>Ctrl</kbd>+<kbd>C</kbd> Copy</span>
+      <span><kbd>Ctrl</kbd>+<kbd>D</kbd> Duplicate</span>
+      <span><kbd>1-9</kbd> Quick run</span>
+      <span class="hint-spacer"></span>
+      <span id="snippetCount">0 snippets</span>
+    </footer>
+  </div>
+
+  <!-- Add / Edit snippet modal -->
+  <div class="modal-overlay" id="modalOverlay" hidden>
+    <div class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+      <h2 id="modalTitle">New snippet</h2>
+
+      <div class="field-row">
+        <div class="field-col field-col-narrow">
+          <label class="field-label" for="newIcon">Icon</label>
+          <input type="text" id="newIcon" class="field-input icon-input" placeholder="Auto" maxlength="4" />
+        </div>
+        <div class="field-col">
+          <label class="field-label" for="newName">Name</label>
+          <input type="text" id="newName" class="field-input" placeholder="e.g. Check listening ports" autocomplete="off" />
+        </div>
+      </div>
+      <div class="icon-picker" id="iconPicker"></div>
+
+      <label class="field-label" for="newTag">Tag / category</label>
+      <input type="text" id="newTag" class="field-input" placeholder="e.g. network" autocomplete="off" list="tagDatalist" />
+      <datalist id="tagDatalist"></datalist>
+
+      <label class="checkbox-row" for="multiStepToggle">
+        <input type="checkbox" id="multiStepToggle" />
+        <span>Multi-step sequence <span class="field-hint">(runs each step in order, shows per-step results)</span></span>
+      </label>
+
+      <div id="singleCommandGroup">
+        <label class="field-label" for="newCommand">
+          Command
+          <span class="field-hint">— use <code>{{name}}</code> for a value you'll fill in before each run</span>
+        </label>
+        <textarea id="newCommand" class="field-textarea" rows="4" placeholder="Test-NetConnection {{host}}"></textarea>
+      </div>
+
+      <div id="stepsGroup" hidden>
+        <label class="field-label">Steps</label>
+        <div id="stepsList" class="steps-list"></div>
+        <button type="button" id="addStepBtn" class="btn btn-ghost btn-small">+ Add step</button>
+        <label class="checkbox-row" for="stopOnStepErrorToggle">
+          <input type="checkbox" id="stopOnStepErrorToggle" />
+          <span>Stop if a step fails <span class="field-hint">(otherwise every step runs regardless)</span></span>
+        </label>
+      </div>
+
+      <div class="field-row">
+        <div class="field-col">
+          <label class="field-label" for="newCwd">Working directory <span class="field-hint">(optional)</span></label>
+          <input type="text" id="newCwd" class="field-input" placeholder="C:\Projects\my-app" autocomplete="off" />
+        </div>
+        <div class="field-col field-col-narrow">
+          <label class="field-label" for="newShell">Shell</label>
+          <div class="select-wrap">
+            <select id="newShell" class="field-input">
+              <option value="powershell">PowerShell</option>
+              <option value="cmd">CMD</option>
+              <option value="gitbash">Git Bash</option>
+              <option value="wsl">WSL</option>
+              <option value="node">Node.js</option>
+              <option value="python">Python</option>
+            </select>
+            <svg class="select-chevron" viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"></polyline></svg>
+          </div>
+        </div>
+      </div>
+
+      <label class="checkbox-row" for="newElevated" id="elevatedRow">
+        <input type="checkbox" id="newElevated" />
+        <span>Run as Administrator <span class="field-hint">(PowerShell only — triggers a UAC prompt)</span></span>
+      </label>
+
+      <label class="checkbox-row" for="stdinToggle">
+        <input type="checkbox" id="stdinToggle" />
+        <span>Provide stdin input <span class="field-hint">(piped into the command as it runs)</span></span>
+      </label>
+      <div id="stdinGroup" hidden>
+        <textarea id="newStdin" class="field-textarea" rows="2" placeholder="Text piped to the command's stdin"></textarea>
+      </div>
+
+      <label class="field-label">Environment variables <span class="field-hint">(optional, added on top of the normal environment)</span></label>
+      <div id="envList" class="env-list"></div>
+      <button type="button" id="addEnvBtn" class="btn btn-ghost btn-small">+ Add variable</button>
+
+      <div class="field-row">
+        <div class="field-col">
+          <label class="field-label" for="expectExitCode">Expect exit code <span class="field-hint">(optional)</span></label>
+          <input type="number" id="expectExitCode" class="field-input" placeholder="e.g. 0" />
+        </div>
+        <div class="field-col">
+          <label class="field-label" for="expectOutput">Expect output contains <span class="field-hint">(optional)</span></label>
+          <input type="text" id="expectOutput" class="field-input" placeholder="e.g. OK" autocomplete="off" />
+        </div>
+      </div>
+
+      <label class="field-label" for="runAfterInput">Run after this one <span class="field-hint">(auto-runs once this snippet succeeds — type a snippet name)</span></label>
+      <input type="text" id="runAfterInput" class="field-input" placeholder="Start typing a snippet name…" autocomplete="off" list="runAfterDatalist" />
+      <datalist id="runAfterDatalist"></datalist>
+
+      <label class="field-label" for="runBeforeInput">Run before this one <span class="field-hint">(runs first, every time this snippet runs; skipped if it fails — type a snippet name)</span></label>
+      <input type="text" id="runBeforeInput" class="field-input" placeholder="Start typing a snippet name…" autocomplete="off" list="runBeforeDatalist" />
+      <datalist id="runBeforeDatalist"></datalist>
+
+      <label class="checkbox-row" for="scheduleToggle">
+        <input type="checkbox" id="scheduleToggle" />
+        <span>Run on a schedule <span class="field-hint">(in the background, while the app is running)</span></span>
+      </label>
+      <div id="scheduleGroup" hidden>
+        <div class="segmented" id="scheduleTypeSegmented">
+          <button type="button" class="segmented-btn" data-value="interval">Every N minutes</button>
+          <button type="button" class="segmented-btn" data-value="daily">Daily at</button>
+          <button type="button" class="segmented-btn" data-value="cron">Cron</button>
+        </div>
+        <div id="scheduleIntervalRow" class="schedule-field-row">
+          <input type="number" id="scheduleIntervalMinutes" class="field-input" min="1" placeholder="60" />
+          <span class="field-hint">minutes</span>
+        </div>
+        <div id="scheduleDailyRow" class="schedule-field-row" hidden>
+          <input type="time" id="scheduleDailyTime" class="field-input" />
+        </div>
+        <div id="scheduleCronRow" class="schedule-field-row" hidden>
+          <input type="text" id="scheduleCronExpr" class="field-input" placeholder="*/15 * * * *" />
+          <p class="field-hint">5 fields: minute hour day-of-month month day-of-week — <code>*</code>, <code>*/n</code>, ranges and lists supported.</p>
+        </div>
+      </div>
+
+      <label class="field-label" for="newNotes">Notes <span class="field-hint">(optional — shown expandable on the card)</span></label>
+      <textarea id="newNotes" class="field-textarea notes-textarea" rows="2" placeholder="Why this snippet exists, gotchas, links…"></textarea>
+
+      <div class="modal-actions">
+        <button id="cancelAddBtn" class="btn btn-ghost">Cancel</button>
+        <button id="saveAddBtn" class="btn btn-primary">Save snippet</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Batch run configuration / live-results modal -->
+  <div class="modal-overlay" id="batchModalOverlay" hidden>
+    <div class="modal modal-wide">
+      <div id="batchConfigView">
+        <h2>Configure batch run</h2>
+        <p class="field-hint">Drag to set the run order. Parameterized snippets are skipped (they need input).</p>
+
+        <label class="field-label">Mode</label>
+        <div class="segmented" id="batchModeSegmented">
+          <button type="button" class="segmented-btn" data-value="sequential">Sequential (in order)</button>
+          <button type="button" class="segmented-btn" data-value="parallel">Parallel (all at once)</button>
+        </div>
+
+        <label class="checkbox-row" for="batchStopOnErrorToggle">
+          <input type="checkbox" id="batchStopOnErrorToggle" />
+          <span>Stop if a snippet fails <span class="field-hint">(sequential mode only)</span></span>
+        </label>
+
+        <label class="field-label">Order</label>
+        <div id="batchOrderList" class="batch-order-list no-scrollbar"></div>
+
+        <div class="modal-actions">
+          <button id="cancelBatchBtn" class="btn btn-ghost">Cancel</button>
+          <button id="startBatchBtn" class="btn btn-primary">Run</button>
+        </div>
+      </div>
+
+      <div id="batchResultsView" hidden>
+        <h2>Batch results</h2>
+        <div id="batchResultsList" class="batch-results-list no-scrollbar"></div>
+        <div class="modal-actions">
+          <button id="closeBatchResultsBtn" class="btn btn-primary">Close</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Run history drawer -->
+  <div class="drawer-overlay" id="historyOverlay" hidden>
+    <aside class="drawer">
+      <div class="drawer-header">
+        <h2>Run history</h2>
+        <div class="drawer-header-actions">
+          <button id="clearHistoryBtn" class="btn btn-ghost btn-danger">Clear</button>
+          <button id="closeHistoryBtn" class="icon-btn" title="Close (Esc)">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="18" y1="6" x2="6" y2="18"></line>
+              <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+          </button>
+        </div>
+      </div>
+      <div class="drawer-search-row">
+        <input type="text" id="historySearchInput" class="drawer-search" placeholder="Search history…" autocomplete="off" />
+      </div>
+      <div class="drawer-body no-scrollbar" id="historyList">
+        <!-- History entries injected by history-drawer.js -->
+      </div>
+    </aside>
+  </div>
+
+  <!-- Variables manager modal -->
+  <div class="modal-overlay" id="variablesOverlay" hidden>
+    <div class="modal modal-wide">
+      <h2>Global variables</h2>
+      <p class="field-hint">
+        Give a value a name once, and it pre-fills any <code>{{name}}</code> placeholder that matches — across every snippet.
+      </p>
+      <div id="variablesList" class="variables-list no-scrollbar"></div>
+      <div class="modal-actions modal-actions-left">
+        <button id="addVariableBtn" class="btn btn-small">+ Add variable</button>
+      </div>
+      <div class="modal-actions">
+        <button id="closeVariablesBtn" class="btn btn-primary">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Snippet groups modal: named, saved sets of snippets you run together on demand -->
+  <div class="modal-overlay" id="groupsOverlay" hidden>
+    <div class="modal modal-wide">
+      <div id="groupsListView">
+        <h2>Groups</h2>
+        <p class="field-hint">Save a set of snippets once, then run them all together anytime — no reselecting.</p>
+        <div id="groupsList" class="groups-list no-scrollbar"></div>
+        <div class="modal-actions modal-actions-left">
+          <button id="addGroupBtn" class="btn btn-small">+ New group</button>
+        </div>
+        <div class="modal-actions">
+          <button id="closeGroupsBtn" class="btn btn-primary">Done</button>
+        </div>
+      </div>
+
+      <div id="groupEditorView" hidden>
+        <h2 id="groupEditorTitle">New group</h2>
+        <label class="field-label" for="groupNameInput">Name</label>
+        <input type="text" id="groupNameInput" class="field-input" placeholder="e.g. Morning setup" autocomplete="off" />
+
+        <label class="field-label">Snippets in this group</label>
+        <div id="groupSnippetChecklist" class="group-snippet-checklist no-scrollbar"></div>
+
+        <div class="modal-actions modal-actions-left">
+          <button id="deleteGroupBtn" class="btn btn-ghost btn-danger" type="button" hidden>Delete group</button>
+        </div>
+        <div class="modal-actions">
+          <button id="cancelGroupEditBtn" class="btn btn-ghost">Cancel</button>
+          <button id="saveGroupBtn" class="btn btn-primary">Save group</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Snippet details modal (read-only: dependencies, schedule, stats) -->
+  <div class="modal-overlay" id="detailsOverlay" hidden>
+    <div class="modal">
+      <h2 id="detailsTitle">Snippet details</h2>
+      <div id="detailsBody" class="details-body"></div>
+      <div class="modal-actions">
+        <button id="closeDetailsBtn" class="btn btn-primary">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Settings modal -->
+  <div class="modal-overlay" id="settingsOverlay" hidden>
+    <div class="modal">
+      <h2>Settings</h2>
+
+      <div class="settings-section">
+        <div class="settings-section-title">Appearance</div>
+
+        <label class="field-label">Theme</label>
+        <div class="segmented" id="themeSegmented">
+          <button type="button" class="segmented-btn" data-value="dark">Dark</button>
+          <button type="button" class="segmented-btn" data-value="light">Light</button>
+          <button type="button" class="segmented-btn" data-value="system">System</button>
+        </div>
+
+        <label class="field-label">Accent color</label>
+        <div class="swatch-row" id="accentSwatches"></div>
+        <div class="accent-custom-row">
+          <input type="color" id="accentColorInput" class="color-input" />
+          <span class="field-hint">Custom</span>
+          <button type="button" id="resetAccentBtn" class="btn btn-ghost btn-small">Reset</button>
+        </div>
+
+        <label class="field-label">Density</label>
+        <div class="segmented" id="densitySegmented">
+          <button type="button" class="segmented-btn" data-value="compact">Compact</button>
+          <button type="button" class="segmented-btn" data-value="comfortable">Comfortable</button>
+          <button type="button" class="segmented-btn" data-value="spacious">Spacious</button>
+        </div>
+
+        <label class="field-label" for="blurSlider">Background blur <span class="field-hint" id="blurValueLabel"></span></label>
+        <input type="range" id="blurSlider" class="slider" min="0" max="40" step="2" />
+
+        <label class="field-label" for="scaleSlider">UI scale <span class="field-hint" id="scaleValueLabel"></span></label>
+        <input type="range" id="scaleSlider" class="slider" min="85" max="125" step="5" />
+      </div>
+
+      <div class="settings-section">
+        <div class="settings-section-title">Behavior</div>
+
+        <label class="field-label" for="hotkeyInput">Global hotkey</label>
+        <div class="hotkey-row">
+          <input type="text" id="hotkeyInput" class="field-input hotkey-input" readonly placeholder="Click, then press a shortcut…" />
+          <button type="button" id="saveHotkeyBtn" class="btn btn-small">Save</button>
+        </div>
+        <p class="field-hint" id="hotkeyStatus"></p>
+
+        <label class="checkbox-row" for="soundToggle">
+          <input type="checkbox" id="soundToggle" />
+          <span>Play a sound when a command finishes</span>
+        </label>
+
+        <label class="checkbox-row" for="notificationsToggle">
+          <input type="checkbox" id="notificationsToggle" />
+          <span>Show a desktop notification when a command finishes in the background</span>
+        </label>
+
+        <label class="checkbox-row" for="devModeToggle">
+          <input type="checkbox" id="devModeToggle" />
+          <span>Developer mode <span class="field-hint">(show the exact command/args sent to the OS for each run)</span></span>
+        </label>
+      </div>
+
+      <div class="settings-section">
+        <div class="settings-section-title">Data</div>
+
+        <label class="checkbox-row" for="launchOnStartupToggle">
+          <input type="checkbox" id="launchOnStartupToggle" />
+          <span>Launch Snippet Runner at Windows startup</span>
+        </label>
+
+        <div class="modal-actions modal-actions-left">
+          <button id="manageVariablesBtn" class="btn">Manage variables…</button>
+          <button id="exportBtn" class="btn">Export snippets…</button>
+          <button id="importBtn" class="btn">Import snippets…</button>
+        </div>
+
+        <label class="field-label">Automatic backups <span class="field-hint">(snapshotted before each change, throttled)</span></label>
+        <div id="backupsList" class="backups-list no-scrollbar"></div>
+      </div>
+
+      <p class="field-hint" style="margin-top:14px;">
+        Toggle the launcher anytime from the tray icon, or with the hotkey above.
+      </p>
+
+      <div class="modal-actions">
+        <button id="closeSettingsBtn" class="btn btn-primary">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" hidden></div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
