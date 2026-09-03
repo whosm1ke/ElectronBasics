@@ -129,6 +129,8 @@ const DEFAULT_SNIPPETS = [
   runBefore: null,
   stopOnStepError: false,
   schedule: null,
+  background: false,
+  autoRestart: false,
 }));
 
 function sanitizeEnvList(env) {
@@ -192,6 +194,12 @@ function sanitizeSnippet(s) {
     runBefore: s.runBefore ? String(s.runBefore) : null,
     stopOnStepError: Boolean(s.stopOnStepError),
     schedule: sanitizeSchedule(s.schedule),
+    // `background`: run as a long-lived process (Start/Stop instead of a
+    // one-shot Run) — only meaningful for a single-command snippet, never a
+    // multi-step sequence (see process-manager.js). `autoRestart` only
+    // matters when `background` is also true.
+    background: Boolean(s.background) && !(steps && steps.length > 0),
+    autoRestart: Boolean(s.autoRestart),
   };
 }
 

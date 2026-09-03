@@ -11,6 +11,7 @@ import { openHistory, closeHistory, isHistoryOpen } from './history-drawer.js';
 import { closeSettings, isSettingsOpen } from './settings-modal.js';
 import { closeVariables, isVariablesOpen } from './variables-modal.js';
 import { closeGroups, isGroupsOpen } from './groups-modal.js';
+import { closePipelines, isPipelinesOpen } from './pipeline-editor.js';
 import { isBatchModalOpen, closeBatchModal } from './batch-runner.js';
 import { removeContextMenu, isContextMenuOpen, removeCopyDropdown, isCopyDropdownOpen } from './menus.js';
 import { duplicateSnippet, togglePin } from './snippets-store.js';
@@ -29,7 +30,7 @@ function runCardAt(index) {
 }
 
 document.addEventListener('keydown', (e) => {
-  const anySurfaceOpen = isEditorOpen() || isDetailsOpen() || isHistoryOpen() || isSettingsOpen() || isVariablesOpen() || isGroupsOpen() || isBatchModalOpen();
+  const anySurfaceOpen = isEditorOpen() || isDetailsOpen() || isHistoryOpen() || isSettingsOpen() || isVariablesOpen() || isGroupsOpen() || isPipelinesOpen() || isBatchModalOpen();
 
   if (e.key === 'Escape') {
     if (isEditorOpen()) closeModal();
@@ -37,6 +38,7 @@ document.addEventListener('keydown', (e) => {
     else if (isBatchModalOpen()) closeBatchModal();
     else if (isVariablesOpen()) closeVariables();
     else if (isGroupsOpen()) closeGroups();
+    else if (isPipelinesOpen()) closePipelines();
     else if (isHistoryOpen()) closeHistory();
     else if (isSettingsOpen()) closeSettings();
     else if (isContextMenuOpen()) removeContextMenu();

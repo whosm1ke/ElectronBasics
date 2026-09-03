@@ -12,5 +12,6 @@ module.exports = {
   APP_SETTINGS_FILE: path.join(USER_DATA, 'app-settings.json'),
   VARIABLES_FILE: path.join(USER_DATA, 'variables.json'),
   GROUPS_FILE: path.join(USER_DATA, 'groups.json'),
+  PIPELINES_FILE: path.join(USER_DATA, 'pipelines.json'),
   BACKUPS_DIR: path.join(USER_DATA, 'backups'),
 };

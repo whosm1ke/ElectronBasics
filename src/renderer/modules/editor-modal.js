@@ -48,6 +48,15 @@ function setStepsList(steps) {
   (steps && steps.length ? steps : ['', '']).forEach((s) => addStepRow(s));
 }
 
+// Background mode only makes sense for a single command (see
+// storage/snippets.js's sanitizeSnippet, which enforces the same rule
+// server-side) — hide the toggle entirely rather than let the user pick a
+// combination the sanitizer would just silently undo on the next save.
+function syncBackgroundAvailability() {
+  dom.backgroundGroup.hidden = dom.multiStepToggle.checked;
+  if (dom.multiStepToggle.checked) dom.backgroundToggle.checked = false;
+}
+
 dom.multiStepToggle.addEventListener('change', () => {
   if (dom.multiStepToggle.checked) {
     if (dom.stepsList.children.length === 0) setStepsList(null);
@@ -55,8 +64,14 @@ dom.multiStepToggle.addEventListener('change', () => {
   } else {
     showSingleGroup();
   }
+  syncBackgroundAvailability();
 });
 dom.addStepBtn.addEventListener('click', () => addStepRow(''));
+
+dom.backgroundToggle.addEventListener('change', () => {
+  dom.autoRestartRow.hidden = !dom.backgroundToggle.checked;
+  if (!dom.backgroundToggle.checked) dom.autoRestartToggle.checked = false;
+});
 
 // --- Environment variables editor ---
 function addEnvRow(key = '', value = '') {
@@ -207,6 +222,10 @@ export function openModal(snippetToEdit) {
     dom.newCommand.value = snippetToEdit ? snippetToEdit.command : '';
     showSingleGroup();
   }
+  syncBackgroundAvailability();
+  dom.backgroundToggle.checked = Boolean(snippetToEdit && snippetToEdit.background) && !hasSteps;
+  dom.autoRestartRow.hidden = !dom.backgroundToggle.checked;
+  dom.autoRestartToggle.checked = Boolean(snippetToEdit && snippetToEdit.autoRestart) && dom.backgroundToggle.checked;
 
   dom.stdinToggle.checked = Boolean(snippetToEdit && snippetToEdit.stdin);
   dom.newStdin.value = (snippetToEdit && snippetToEdit.stdin) || '';
@@ -324,9 +343,12 @@ async function saveModalSnippet() {
     lastRunAt: existingSchedule ? existingSchedule.lastRunAt : null,
   } : null;
 
+  const background = dom.backgroundToggle.checked && !steps;
+  const autoRestart = background && dom.autoRestartToggle.checked;
+
   const fields = {
     name, tag, command, steps, cwd, shell, elevated, icon, notes, stdin, env, expect,
-    runAfterThis, runBefore, stopOnStepError, schedule,
+    runAfterThis, runBefore, stopOnStepError, schedule, background, autoRestart,
   };
 
   if (state.editingId) {

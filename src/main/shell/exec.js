@@ -185,4 +185,4 @@ function runShellCommand(command, options = {}) {
   });
 }
 
-module.exports = { runShellCommand, SHELL_CANDIDATES };
+module.exports = { runShellCommand, buildInvocation, SHELL_CANDIDATES };

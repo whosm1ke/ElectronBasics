@@ -70,6 +70,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   /** Persists the full groups list. */
   saveGroups: (groups) => ipcRenderer.invoke('save-groups', groups),
 
+  /** Loads the saved pipelines (small snippet graphs with branching conditions). */
+  getPipelines: () => ipcRenderer.invoke('get-pipelines'),
+
+  /** Persists the full pipelines list. */
+  savePipelines: (pipelines) => ipcRenderer.invoke('save-pipelines', pipelines),
+
   /** Opens a filesystem path in the OS file explorer. */
   openPath: (targetPath) => ipcRenderer.invoke('open-path', targetPath),
 
@@ -116,5 +122,37 @@ contextBridge.exposeInMainWorld('electronAPI', {
     const listener = (_event, status) => callback(status);
     ipcRenderer.on('update-status', listener);
     return () => ipcRenderer.removeListener('update-status', listener);
+  },
+
+  /**
+   * Starts a snippet as a long-running background process (spawn, not
+   * execFile+wait) — see shell/process-manager.js. Returns {ok, error?}
+   * immediately; the actual status (running/crashed/exited/...) arrives via
+   * onProcessStatus, and its live output via onProcessOutput.
+   * @param {{snippetId: string, command: string, cwd?: string, shell?: string, env?: Array<{key:string,value:string}>, autoRestart?: boolean}} payload
+   */
+  startProcess: (payload) => ipcRenderer.invoke('start-process', payload),
+
+  /** Stops the background process running for `snippetId` (kills its whole process tree, not just the direct child). */
+  stopProcess: (snippetId) => ipcRenderer.invoke('stop-process', snippetId),
+
+  /** Stops and re-starts the background process for `snippetId` with the same options, resetting its auto-restart budget. */
+  restartProcess: (snippetId) => ipcRenderer.invoke('restart-process', snippetId),
+
+  /** Lists every currently-live background process — used at renderer boot to reconcile UI state with what's actually still running in the main process (which survives a renderer-only reload). */
+  listProcesses: () => ipcRenderer.invoke('list-processes'),
+
+  /** Subscribes to background-process output chunks: {snippetId, stream: 'stdout'|'stderr', chunk}. */
+  onProcessOutput: (callback) => {
+    const listener = (_event, data) => callback(data);
+    ipcRenderer.on('process-output', listener);
+    return () => ipcRenderer.removeListener('process-output', listener);
+  },
+
+  /** Subscribes to background-process lifecycle changes: {snippetId, status: 'starting'|'running'|'stopped'|'exited'|'crashed'|'restarting'|'restart-limit'|'error', ...}. */
+  onProcessStatus: (callback) => {
+    const listener = (_event, data) => callback(data);
+    ipcRenderer.on('process-status', listener);
+    return () => ipcRenderer.removeListener('process-status', listener);
   },
 });

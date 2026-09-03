@@ -45,6 +45,14 @@
           <polyline points="3 12 12 17 21 12"></polyline>
         </svg>
       </button>
+      <button id="pipelinesBtn" class="icon-btn" title="Pipelines — chain snippets with branching">
+        <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="5" cy="6" r="2.5"></circle>
+          <circle cx="19" cy="6" r="2.5"></circle>
+          <circle cx="19" cy="18" r="2.5"></circle>
+          <path d="M7.5 6h9M19 8.5V15.5M16.8 17.2 9 8.5"></path>
+        </svg>
+      </button>
       <button id="historyBtn" class="icon-btn" title="Run history (Ctrl+H)">
         <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2">
           <circle cx="12" cy="12" r="9"></circle>
@@ -180,6 +188,17 @@
         <input type="checkbox" id="newElevated" />
         <span>Run as Administrator <span class="field-hint">(PowerShell only — triggers a UAC prompt)</span></span>
       </label>
+
+      <div id="backgroundGroup">
+        <label class="checkbox-row" for="backgroundToggle">
+          <input type="checkbox" id="backgroundToggle" />
+          <span>Run as a background process <span class="field-hint">(Start/Stop a long-running process — dev server, docker compose up, tail -f — instead of run-once)</span></span>
+        </label>
+        <label class="checkbox-row" for="autoRestartToggle" id="autoRestartRow" hidden>
+          <input type="checkbox" id="autoRestartToggle" />
+          <span>Restart automatically if it crashes <span class="field-hint">(gives up after 5 restarts in a row)</span></span>
+        </label>
+      </div>
 
       <label class="checkbox-row" for="stdinToggle">
         <input type="checkbox" id="stdinToggle" />
@@ -355,6 +374,54 @@
         <div class="modal-actions">
           <button id="cancelGroupEditBtn" class="btn btn-ghost">Cancel</button>
           <button id="saveGroupBtn" class="btn btn-primary">Save group</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Pipelines modal: small snippet graphs with branching (success/failure/always) conditions -->
+  <div class="modal-overlay" id="pipelinesOverlay" hidden>
+    <div class="modal modal-pipeline">
+      <div id="pipelinesListView">
+        <h2>Pipelines</h2>
+        <p class="field-hint">Chain snippets with branching — run different steps depending on whether the previous one succeeded.</p>
+        <div id="pipelinesList" class="groups-list no-scrollbar"></div>
+        <div class="modal-actions modal-actions-left">
+          <button id="addPipelineBtn" class="btn btn-small">+ New pipeline</button>
+        </div>
+        <div class="modal-actions">
+          <button id="closePipelinesBtn" class="btn btn-primary">Done</button>
+        </div>
+      </div>
+
+      <div id="pipelineEditorView" hidden>
+        <div class="pipeline-editor-header">
+          <input type="text" id="pipelineNameInput" class="field-input" placeholder="Pipeline name" autocomplete="off" />
+          <input type="text" id="pipelineDescriptionInput" class="field-input" placeholder="Description (optional)" autocomplete="off" />
+        </div>
+        <div class="pipeline-toolbar">
+          <button type="button" id="addPipelineStepBtn" class="btn btn-small">+ Add step</button>
+          <button type="button" id="autoArrangePipelineBtn" class="btn btn-small">Auto-arrange</button>
+          <span class="hint-spacer"></span>
+          <span class="field-hint pipeline-toolbar-hint">Drag a step to move it · drag its right dot onto another step to connect · click a step or connection to edit it</span>
+        </div>
+        <div class="pipeline-editor-body">
+          <div id="pipelineCanvasWrap" class="pipeline-canvas-wrap">
+            <div id="pipelineCanvas" class="pipeline-canvas">
+              <svg id="pipelineEdgesSvg" class="pipeline-edges-svg"></svg>
+              <div id="pipelineEdgeLabels" class="pipeline-edge-labels"></div>
+              <div id="pipelineNodesLayer" class="pipeline-nodes-layer"></div>
+            </div>
+          </div>
+          <div id="pipelineInspector" class="pipeline-inspector no-scrollbar" hidden></div>
+        </div>
+        <div class="modal-actions modal-actions-left">
+          <button id="deletePipelineBtn" class="btn btn-ghost btn-danger" type="button" hidden>Delete pipeline</button>
+        </div>
+        <div class="modal-actions">
+          <button id="cancelPipelineEditBtn" class="btn btn-ghost">Cancel</button>
+          <button id="runPipelineFromEditorBtn" class="btn" type="button">Run</button>
+          <button id="savePipelineBtn" class="btn btn-primary">Save pipeline</button>
         </div>
       </div>
     </div>

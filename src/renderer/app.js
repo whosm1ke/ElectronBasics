@@ -10,6 +10,7 @@ import { refresh } from './modules/cards.js';
 import { openHistory } from './modules/history-drawer.js';
 import { showToast } from './modules/toast.js';
 import { emitGroupsChanged } from './modules/events.js';
+import { bootstrapRunningProcesses } from './modules/process-engine.js';
 
 // Safety net: an uncaught error or a rejected promise nobody .catch()'d
 // would otherwise fail completely silently in here — no crash dialog, no
@@ -38,6 +39,8 @@ import './modules/editor-modal.js';
 import './modules/details-modal.js';
 import './modules/variables-modal.js';
 import './modules/groups-modal.js';
+import './modules/pipeline-editor.js';
+import './modules/process-engine.js';
 import './modules/settings-modal.js';
 import './modules/batch.js';
 import './modules/keyboard.js';
@@ -79,3 +82,4 @@ window.electronAPI.getGroups().then((groups) => {
   state.groups = groups;
   emitGroupsChanged(); // redraws cards so "in group" badges show up on first load, not just after opening Groups
 });
+bootstrapRunningProcesses().then(() => refresh()); // picks up anything still running from before a renderer reload/crash — see its own doc comment

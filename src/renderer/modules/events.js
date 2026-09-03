@@ -31,6 +31,23 @@ export function emitGroupsChanged() {
 }
 
 /**
+ * Fired whenever the shared batch-results modal (batch-runner.js) closes —
+ * used by pipeline-editor.js to reopen the Pipelines modal it hid before
+ * starting a run (see pipeline-editor.js's pendingPipelineReturn), so
+ * seeing pipeline results never requires closing the pipeline editor
+ * first. Generic on purpose (batch-runner.js has no idea pipelines exist —
+ * it just announces "I closed"); harmless no-op for every other caller
+ * (select-mode batch, group run, tag "Run all") since nothing else listens.
+ */
+const BATCH_MODAL_CLOSED = 'batch-modal-closed';
+export function onBatchModalClosed(handler) {
+  bus.addEventListener(BATCH_MODAL_CLOSED, handler);
+}
+export function emitBatchModalClosed() {
+  bus.dispatchEvent(new Event(BATCH_MODAL_CLOSED));
+}
+
+/**
  * Fired whenever the Add/Edit snippet modal closes (Cancel, Save, or
  * Escape) — used by details-modal.js to reopen Details for wherever the
  * editor was navigated FROM (via a "Runs before it"/"Runs after it" link),

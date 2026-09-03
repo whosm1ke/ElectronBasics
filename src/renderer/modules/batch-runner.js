@@ -1,13 +1,18 @@
 // batch-runner.js — the shared "configure, then run a list of snippets with
 // live per-row output" engine plus the batch modal's open/close plumbing.
-// Used by both batch.js (the select-mode flow) and cards.js ("Run all" on a
-// tag group) so a group run gets the exact same order/mode/stop-on-error
-// config step and live output a manually-selected batch gets. Deliberately
-// has no dependency on cards.js (which needs to import this) — keeping it a
-// leaf module is what avoids a cards.js <-> batch.js import cycle.
+// Used by batch.js (the select-mode flow), cards.js ("Run all" on a tag
+// group), and groups-modal.js (running a saved group) so they all get the
+// exact same order/mode/stop-on-error config step and live output. Its row-
+// building/status helpers (buildResultRow, setRow*) and runOne() are also
+// exported for pipeline-engine.js, which reuses this same results-modal
+// look for a pipeline run but drives it with graph-branching logic instead
+// of runBatchList's flat ordered list. Deliberately has no dependency on
+// cards.js (which needs to import this) — keeping it a leaf module is what
+// avoids a cards.js <-> batch.js import cycle.
 import { dom } from './dom.js';
 import { state } from './state.js';
 import { snippetIcon, prettyMaybeJson, runnableTextOf, extractPlaceholders } from './utils.js';
+import { emitBatchModalClosed } from './events.js';
 
 export function showConfigView() {
   dom.batchConfigView.hidden = false;
@@ -24,6 +29,7 @@ export function openBatchResultsModal() {
 }
 export function closeBatchModal() {
   dom.batchModalOverlay.hidden = true;
+  emitBatchModalClosed();
 }
 export function isBatchModalOpen() {
   return !dom.batchModalOverlay.hidden;
@@ -117,8 +123,8 @@ export function openBatchConfig(list) {
 
 // --- Live-results run ---
 
-/** Builds one live-updating result row; returns handles to update it as the run progresses. */
-function buildResultRow(snippet) {
+/** Builds one live-updating result row; returns handles to update it as the run progresses. Exported so pipeline-engine.js can reuse the exact same row/modal look for a pipeline run instead of building its own — the visual is identical (status-dot rows in this same results modal), only what decides which snippet runs next differs. */
+export function buildResultRow(snippet) {
   const row = document.createElement('div');
   row.className = 'batch-result-row';
   row.innerHTML = `
@@ -137,13 +143,13 @@ function buildResultRow(snippet) {
   return { row, statusDot, body };
 }
 
-function setRowPending(handles) {
+export function setRowPending(handles) {
   handles.statusDot.className = 'status-dot';
 }
-function setRowRunning(handles) {
+export function setRowRunning(handles) {
   handles.statusDot.className = 'status-dot running';
 }
-function setRowDone(handles, result) {
+export function setRowDone(handles, result) {
   const success = result.code === 0;
   handles.statusDot.className = `status-dot ${success ? 'ok' : 'error'}`;
   const text = prettyMaybeJson((result.stdout || '').trim()) || (result.stderr || '').trim() || '(no output)';
@@ -151,7 +157,7 @@ function setRowDone(handles, result) {
   handles.body.hidden = false;
   return success;
 }
-function setRowSkipped(handles) {
+export function setRowSkipped(handles) {
   handles.statusDot.className = 'status-dot';
   handles.body.textContent = 'Skipped — needs input (parameterized snippet).';
   handles.body.hidden = false;
@@ -162,7 +168,7 @@ function setRowNotRun(handles) {
   handles.body.hidden = false;
 }
 
-async function runOne(snippet) {
+export async function runOne(snippet) {
   if (snippet.steps && snippet.steps.length) {
     const result = await window.electronAPI.runSequence({
       steps: snippet.steps, snippetId: snippet.id, snippetName: snippet.name,

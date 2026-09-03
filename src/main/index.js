@@ -12,6 +12,7 @@ const { registerHotkey } = require('./hotkey');
 const { registerIpcHandlers } = require('./ipc');
 const { startScheduler } = require('./scheduler');
 const { initUpdater } = require('./updater');
+const processManager = require('./shell/process-manager');
 const { ensureSnippetsFile } = require('./storage/snippets');
 const { ensureHistoryFile } = require('./storage/history');
 const { readAppSettings } = require('./storage/app-settings');
@@ -81,6 +82,19 @@ app.on('will-quit', () => {
   globalShortcut.unregisterAll();
 });
 
-app.on('before-quit', () => {
+// Background processes (see shell/process-manager.js) are meant to survive
+// hiding the window — that's the whole point — but must not survive the app
+// actually quitting, or a dev server/docker-compose-up would keep running
+// invisibly with nothing left to stop it. quitConfirmed guards against the
+// event.preventDefault()+app.quit() below re-entering this same handler in
+// an infinite loop once cleanup is done and it's time to actually exit.
+let quitConfirmed = false;
+app.on('before-quit', (event) => {
   app.isQuitting = true;
+  if (quitConfirmed) return;
+  event.preventDefault();
+  processManager.stopAll().finally(() => {
+    quitConfirmed = true;
+    app.quit();
+  });
 });

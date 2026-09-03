@@ -134,6 +134,34 @@ export function findDependencyCycle(snippets) {
   return null;
 }
 
+/**
+ * Would adding a `from -> to` edge to a pipeline's existing `edges`
+ * ({from, to}, node ids) create a cycle? True iff `to` can already reach
+ * `from` by following existing edges — completing that path with the new
+ * edge would loop back to `from`. Used by pipeline-editor.js before saving
+ * a new connection; kept here (not in pipeline-editor.js) since it's a
+ * pure graph function with no DOM/state dependency, same reasoning as
+ * findDependencyCycle above.
+ */
+export function pipelineEdgeCreatesCycle(edges, from, to) {
+  if (from === to) return true;
+  const successors = new Map();
+  edges.forEach((e) => {
+    if (!successors.has(e.from)) successors.set(e.from, []);
+    successors.get(e.from).push(e.to);
+  });
+  const visited = new Set();
+  const stack = [to];
+  while (stack.length) {
+    const cur = stack.pop();
+    if (cur === from) return true;
+    if (visited.has(cur)) continue;
+    visited.add(cur);
+    (successors.get(cur) || []).forEach((n) => stack.push(n));
+  }
+  return false;
+}
+
 /** The "PowerShell · 3-step sequence · ran 4× · last 2m ago"-style meta line under a card's title. Shared by cards.js (initial render) and run-engine.js (in-place patch after a run, so a run doesn't need a full card rebuild just to update this text). */
 export function buildCardMetaText(snippet) {
   const parts = [];

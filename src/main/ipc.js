@@ -10,6 +10,7 @@ const { getMainWindow, hideWindow, showWindow } = require('./window');
 const { registerHotkey, getCurrentHotkey } = require('./hotkey');
 const { runShellCommand } = require('./shell/exec');
 const { openTerminal } = require('./shell/terminal');
+const processManager = require('./shell/process-manager');
 const { envListToObject } = require('./env-utils');
 const { newId } = require('./id');
 
@@ -18,6 +19,7 @@ const historyStore = require('./storage/history');
 const appSettingsStore = require('./storage/app-settings');
 const variablesStore = require('./storage/variables');
 const groupsStore = require('./storage/groups');
+const pipelinesStore = require('./storage/pipelines');
 const backupsStore = require('./storage/backups');
 const updater = require('./updater');
 
@@ -91,6 +93,25 @@ function registerIpcHandlers() {
 
   ipcMain.handle('open-terminal', async (_event, payload) => {
     return openTerminal(payload || {});
+  });
+
+  ipcMain.handle('start-process', async (_event, payload) => {
+    const {
+      snippetId, command, cwd = null, shell: shellType = 'powershell', env = null, autoRestart = false,
+    } = payload || {};
+    return processManager.startProcess({ snippetId, command, cwd, shellType, env: envListToObject(env), autoRestart });
+  });
+
+  ipcMain.handle('stop-process', async (_event, snippetId) => {
+    return processManager.stopProcess(snippetId);
+  });
+
+  ipcMain.handle('restart-process', async (_event, snippetId) => {
+    return processManager.restartProcess(snippetId);
+  });
+
+  ipcMain.handle('list-processes', async () => {
+    return processManager.listProcesses();
   });
 
   ipcMain.handle('copy-text', async (_event, text) => {
@@ -194,6 +215,14 @@ function registerIpcHandlers() {
 
   ipcMain.handle('save-groups', async (_event, groups) => {
     return groupsStore.writeGroups(groups);
+  });
+
+  ipcMain.handle('get-pipelines', async () => {
+    return pipelinesStore.readPipelines();
+  });
+
+  ipcMain.handle('save-pipelines', async (_event, pipelines) => {
+    return pipelinesStore.writePipelines(pipelines);
   });
 
   ipcMain.handle('open-path', async (_event, targetPath) => {

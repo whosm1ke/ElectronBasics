@@ -34,11 +34,34 @@ export const state = {
   groups: [],
   editingGroupId: null, // null = "new group" mode in the group editor, otherwise the id being edited
 
+  /** @type {Array<{id:string,name:string,description:string,nodes:Array,edges:Array}>} */
+  pipelines: [],
+  editingPipelineId: null, // null = "new pipeline" mode, otherwise the id being edited
+  // Working copy of the graph being edited — only written back to
+  // state.pipelines on Save, so Cancel is a true discard. See
+  // pipeline-editor.js.
+  pipelineNodes: [], // [{id, snippetId, x, y}]
+  pipelineEdges: [], // [{id, from, to, condition}]
+  pipelineDragNodeId: null, // node being repositioned by mouse drag, if any
+  pipelineConnectFromId: null, // node whose output port a new connection is being dragged from, if any
+  pipelineSelection: null, // {type: 'node'|'edge', id} — drives the inspector side panel
+
   // Last-known update-check status ({status: 'idle'|'checking'|'available'|...}
   // plus whatever extra fields that status carries) — kept here (not just
   // local to settings-modal.js) so reopening Settings mid-download restores
   // the right UI instead of resetting to "Check for updates" every time.
   updateStatus: { status: 'idle' },
+
+  // Live state for background-process snippets, keyed by snippetId:
+  // {status, outputBuffer (a string, capped — see process-engine.js), pid}.
+  // Lives here (not in any card's DOM) specifically because cards.js's
+  // refresh() fully rebuilds card DOM on any snippets/groups change or
+  // search/sort/filter edit — a background process can easily outlive many
+  // of those. buildCard() reads this to decide Start-vs-Stop and to
+  // pre-populate the output panel; process-engine.js's onProcessOutput/
+  // onProcessStatus listeners update it and opportunistically patch the
+  // *current* DOM if that card happens to be rendered right now.
+  runningProcesses: {},
 
   // Appearance / behavior settings (all local to this device)
   theme: localStorage.getItem('snippetRunner.theme') || 'system',

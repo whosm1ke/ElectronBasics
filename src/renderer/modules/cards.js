@@ -18,6 +18,10 @@ import { openDetails } from './details-modal.js';
 import { onSnippetsChanged, onGroupsChanged } from './events.js';
 import { openBatchConfig } from './batch-runner.js';
 import { groupsForSnippet } from './groups-modal.js';
+import {
+  startBackground, startBackgroundWithValues, stopBackground, restartBackground,
+  syncCardBackgroundUI, isRunningStatus,
+} from './process-engine.js';
 
 export function refresh() {
   applyFilter(dom.searchInput.value);
@@ -132,9 +136,18 @@ function buildCard(snippet, index, reorderable) {
 
   const bodyEl = buildBody(snippet);
   const [notesToggle, notesBody] = buildNotes(snippet);
-  const { actions, runBtn, output, copyOutputBtn } = buildActionsAndOutput(snippet, card);
 
-  wireRunButton(snippet, card, runBtn, output, copyOutputBtn);
+  let actions, output;
+  if (snippet.background) {
+    const built = buildBackgroundActionsAndOutput(snippet, card);
+    ({ actions, output } = built);
+    wireBackgroundControls(snippet, card, built.startStopBtn, built.restartBtn, output);
+    syncCardBackgroundUI(card, snippet.id);
+  } else {
+    const built = buildActionsAndOutput(snippet, card);
+    ({ actions, output } = built);
+    wireRunButton(snippet, card, built.runBtn, output, built.copyOutputBtn);
+  }
 
   card.addEventListener('click', () => {
     state.selectedIndex = index;
@@ -222,6 +235,15 @@ function buildTitleGroup(snippet) {
     schedBadge.title = 'Runs automatically on a schedule';
     schedBadge.innerHTML = iconSvg('clock');
     titleRow.appendChild(schedBadge);
+  }
+  if (snippet.background) {
+    const bgBadge = document.createElement('span');
+    bgBadge.className = 'background-badge';
+    bgBadge.title = snippet.autoRestart
+      ? 'Background process (Start/Stop) — restarts automatically if it crashes'
+      : 'Background process (Start/Stop instead of run-once)';
+    bgBadge.innerHTML = iconSvg('terminal');
+    titleRow.appendChild(bgBadge);
   }
   const memberGroups = groupsForSnippet(snippet.id);
   if (memberGroups.length > 0) {
@@ -320,14 +342,8 @@ function buildNotes(snippet) {
   return [notesToggle, notesBody];
 }
 
-function buildActionsAndOutput(snippet, card) {
-  const actions = document.createElement('div');
-  actions.className = 'card-actions';
-
-  const runBtn = document.createElement('button');
-  runBtn.className = 'btn btn-primary';
-  runBtn.innerHTML = `${iconSvg('play')}<span>Run</span>`;
-
+/** The Copy/Edit/Duplicate/[spacer]/Delete buttons every card gets regardless of run mode — split out so buildActionsAndOutput and buildBackgroundActionsAndOutput don't duplicate them. */
+function buildCommonActionButtons(snippet) {
   const copyWrap = document.createElement('div');
   copyWrap.className = 'copy-split';
   const copyBtn = document.createElement('button');
@@ -375,14 +391,24 @@ function buildActionsAndOutput(snippet, card) {
   deleteBtn.innerHTML = `${iconSvg('trash')}<span>Delete</span>`;
   deleteBtn.addEventListener('click', async (e) => {
     e.stopPropagation();
+    // A background snippet's still-live process has no card left to
+    // control once the card itself is gone — stop it first so deleting the
+    // snippet can never leave an orphaned, now-uncontrollable process
+    // running behind the scenes.
+    if (snippet.background && isRunningStatus(state.runningProcesses[snippet.id]?.status)) {
+      await stopBackground(snippet);
+    }
     const result = await deleteSnippet(snippet.id);
     if (result) {
       showToast(`Deleted "${result.removed.name}"`, 'info', 'Undo', () => undoDelete(result.removed, result.index));
     }
   });
 
-  actions.append(runBtn, copyWrap, editBtn, dupBtn, spacer, deleteBtn);
+  return { copyWrap, editBtn, dupBtn, spacer, deleteBtn };
+}
 
+/** The status-dot/status-text output console shared by both run modes — split out for the same reason as buildCommonActionButtons. */
+function buildOutputPanel(card) {
   const output = document.createElement('div');
   output.className = 'card-output';
   output.hidden = true;
@@ -411,7 +437,74 @@ function buildActionsAndOutput(snippet, card) {
     output.hidden = true;
   });
 
+  return { output, copyOutputBtn };
+}
+
+function buildActionsAndOutput(snippet, card) {
+  const actions = document.createElement('div');
+  actions.className = 'card-actions';
+
+  const runBtn = document.createElement('button');
+  runBtn.className = 'btn btn-primary';
+  runBtn.innerHTML = `${iconSvg('play')}<span>Run</span>`;
+
+  const { copyWrap, editBtn, dupBtn, spacer, deleteBtn } = buildCommonActionButtons(snippet);
+  actions.append(runBtn, copyWrap, editBtn, dupBtn, spacer, deleteBtn);
+
+  const { output, copyOutputBtn } = buildOutputPanel(card);
   return { actions, runBtn, output, copyOutputBtn };
+}
+
+/** Same card chrome as buildActionsAndOutput, but Run is replaced by a Start/Stop toggle plus a Restart button — for `snippet.background` snippets (see process-engine.js). Initial label/state gets set right after by syncCardBackgroundUI(); this only needs to build the elements. */
+function buildBackgroundActionsAndOutput(snippet, card) {
+  const actions = document.createElement('div');
+  actions.className = 'card-actions';
+
+  const startStopBtn = document.createElement('button');
+  startStopBtn.className = 'btn btn-small btn-primary bg-startstop-btn';
+  startStopBtn.innerHTML = `${iconSvg('play')}<span>Start</span>`;
+
+  const restartBtn = document.createElement('button');
+  restartBtn.className = 'btn btn-small bg-restart-btn';
+  restartBtn.title = 'Restart';
+  restartBtn.innerHTML = iconSvg('rerun');
+  restartBtn.disabled = true;
+
+  const { copyWrap, editBtn, dupBtn, spacer, deleteBtn } = buildCommonActionButtons(snippet);
+  actions.append(startStopBtn, restartBtn, copyWrap, editBtn, dupBtn, spacer, deleteBtn);
+
+  const { output, copyOutputBtn } = buildOutputPanel(card);
+  return { actions, startStopBtn, restartBtn, output, copyOutputBtn };
+}
+
+/** Wires Start/Stop (collecting placeholder values first, same inline form the normal Run button uses) and Restart to process-engine.js. No confirmation gate, same as everywhere else in this app — Start runs the command exactly like Run does, it just doesn't wait for it to finish. */
+function wireBackgroundControls(snippet, card, startStopBtn, restartBtn, output) {
+  let paramFormEl = null;
+  function removeParamForm() {
+    if (paramFormEl) { paramFormEl.remove(); paramFormEl = null; }
+  }
+
+  startStopBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (isRunningStatus(state.runningProcesses[snippet.id]?.status)) {
+      stopBackground(snippet);
+      return;
+    }
+    if (paramFormEl) return; // form already open — use its own Run button
+    const names = startBackground(snippet);
+    if (names.length > 0) {
+      paramFormEl = buildParamForm(names, (values) => {
+        removeParamForm();
+        startBackgroundWithValues(snippet, values);
+      }, removeParamForm);
+      card.insertBefore(paramFormEl, output);
+    }
+  });
+
+  restartBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    restartBackground(snippet);
+  });
 }
 
 /** Wires the Run button: collect placeholder values if any, then hand off to run-engine. No confirmation gate — running a command is the user's call. */
