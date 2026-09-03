@@ -41,7 +41,8 @@
     "publish": {
       "provider": "github",
       "owner": "whosm1ke",
-      "repo": "ElectronBasics"
+      "repo": "ElectronBasics",
+      "releaseType": "release"
     },
     "win": {
       "target": [
