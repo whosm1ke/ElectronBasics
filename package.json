@@ -1,6 +1,6 @@
 {
   "name": "snippet-runner",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Local Snippet & Command Runner — Raycast/Spotlight-style PowerShell launcher for Windows",
   "license": "ISC",
   "author": "Developer",
