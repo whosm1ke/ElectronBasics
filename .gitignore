@@ -158,7 +158,6 @@ typings/
 # DynamoDB Local files
 .dynamodb/
 
-lib
 .DS_Store
 
 # local config
@@ -168,3 +167,6 @@ config/local.config.json
 yalc.lock
 .exposedserverurl
 lde/config/sensitive.local.config.json
+# session-local Playwright verification driver (not project tooling)
+.e2e-driver.mjs
+.e2e-cmds*.json

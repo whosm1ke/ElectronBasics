@@ -5,21 +5,35 @@
   "license": "ISC",
   "author": "Developer",
   "type": "commonjs",
-  "main": "src/main/index.js",
+  "main": "out/main/index.js",
   "scripts": {
-    "start": "electron .",
-    "build": "electron-builder --win",
-    "build:portable": "electron-builder --win portable",
-    "release": "npm version patch --no-git-tag-version && electron-builder --win --publish always",
-    "release:minor": "npm version minor --no-git-tag-version && electron-builder --win --publish always",
-    "release:major": "npm version major --no-git-tag-version && electron-builder --win --publish always"
+    "start": "electron-vite dev",
+    "typecheck": "tsc --build --noEmit",
+    "test": "vitest run",
+    "build": "electron-vite build && electron-builder --win",
+    "build:portable": "electron-vite build && electron-builder --win portable",
+    "release": "npm version patch --no-git-tag-version && electron-vite build && electron-builder --win --publish always",
+    "release:minor": "npm version minor --no-git-tag-version && electron-vite build && electron-builder --win --publish always",
+    "release:major": "npm version major --no-git-tag-version && electron-vite build && electron-builder --win --publish always"
   },
   "dependencies": {
-    "electron-updater": "^6.8.9"
+    "electron-updater": "^6.8.9",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "zustand": "^5.0.15"
   },
   "devDependencies": {
-    "electron": "^44.1.1",
-    "electron-builder": "^26.15.3"
+    "@types/node": "^25.9.5",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.7",
+    "@vitejs/plugin-react": "^5.2.0",
+    "electron": "^44.2.0",
+    "electron-builder": "^26.15.3",
+    "electron-vite": "^5.0.0",
+    "playwright-core": "^1.62.1",
+    "typescript": "^7.0.2",
+    "vite": "^7.3.6",
+    "vitest": "^4.1.11"
   },
   "build": {
     "appId": "com.snippetrunner.app",
@@ -35,7 +49,7 @@
     ],
     "afterPack": "build/afterPack.js",
     "files": [
-      "src/**/*",
+      "out/**/*",
       "package.json"
     ],
     "publish": {
