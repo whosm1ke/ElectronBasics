@@ -13,7 +13,7 @@
 // a chatty process like `tail -f` or a dev server.
 import type { Snippet, ProcessStatusValue, ProcessOutputEvent, ProcessStatusEvent } from '@shared/types';
 import { iconSvg } from './icons';
-import { showToast } from '../store/useToastStore';
+import { showToast } from './toast';
 import { playTone, maybeNotify } from './appearance';
 import { extractPlaceholders, runnableTextOf, substituteAll } from './utils';
 import { syncVariablesFromValues } from './variables';

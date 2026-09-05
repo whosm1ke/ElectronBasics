@@ -169,6 +169,47 @@ export function pipelineEdgeCreatesCycle(edges: Pick<PipelineEdge, 'from' | 'to'
   return false;
 }
 
+export type CreateEdgeResult = { ok: true; edge: PipelineEdge } | { ok: false; error: string };
+
+/**
+ * Validates and builds a new `from -> to` edge (duplicate-connection and
+ * cycle checks, both pre-existing rules — see pipelineEdgeCreatesCycle
+ * above) without touching any state itself. Shared by both ways this app
+ * lets you connect two steps: dragging from a step's out-port onto another
+ * step's in-port on the canvas (PipelineCanvas.tsx's onConnect), and the
+ * Inspector's explicit "+ Connect to…" picker (PipelinesModal.tsx) — the
+ * latter exists as a reliable, precision-drag-free alternative for exactly
+ * this pipeline's set of steps, not just a nice-to-have.
+ */
+export function tryCreatePipelineEdge(edges: PipelineEdge[], from: string, to: string): CreateEdgeResult {
+  if (from === to) return { ok: false, error: "A step can't connect to itself" };
+  if (edges.some((e) => e.from === from && e.to === to)) {
+    return { ok: false, error: 'These two steps are already connected' };
+  }
+  if (pipelineEdgeCreatesCycle(edges, from, to)) {
+    return { ok: false, error: "Can't connect — that would create a loop" };
+  }
+  return { ok: true, edge: { id: newId('edge'), from, to, condition: 'success', value: null } };
+}
+
+/** The human-readable form of a pipeline edge's branch condition — shared by the Inspector's "Connects to" list (PipelinesModal.tsx) and the canvas edge label itself (PipelineConditionEdge.tsx), so the two never drift apart. */
+export function pipelineConditionLabel({ condition, value }: Pick<PipelineEdge, 'condition' | 'value'>): string {
+  switch (condition) {
+    case 'success':
+      return 'on success';
+    case 'failure':
+      return 'on failure';
+    case 'always':
+      return 'always';
+    case 'exitCode':
+      return `exit = ${value ?? '?'}`;
+    case 'outputContains':
+      return `has "${value ?? ''}"`;
+    default:
+      return condition;
+  }
+}
+
 /** The "PowerShell · 3-step sequence · ran 4× · last 2m ago"-style meta line under a card's title. Shared by cards.js (initial render) and run-engine.js (in-place patch after a run, so a run doesn't need a full card rebuild just to update this text). */
 export function buildCardMetaText(snippet: Snippet): string {
   const parts: string[] = [];

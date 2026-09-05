@@ -11,16 +11,19 @@
 // identically whether React or vanilla JS created the node — see the
 // migration plan's Phase 7 notes.
 import { useEffect, useRef, useState } from 'react';
+import { useSortable } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+import { Lock, Clock, SquareTerminal, Layers, Folder, Info, Star, Play, RotateCcw, Check, Copy, ChevronDown, Pencil, CopyPlus, Trash2, X } from 'lucide-react';
 import type { Snippet, Group } from '@shared/types';
-import { iconSvg, starIconSvg } from '../../lib/icons';
 import { tagIcon, snippetIcon, tagColors, buildCardMetaText, extractPlaceholders, substituteAll, runnableTextOf } from '../../lib/utils';
-import { showToast } from '../../store/useToastStore';
+import { showToast } from '../../lib/toast';
 import { ParamForm } from './ParamForm';
 import { state } from '../../../modules/state';
-import { persistSnippets, togglePin, duplicateSnippet, deleteSnippet, undoDelete } from '../../lib/snippetsStore';
+import { togglePin, duplicateSnippet, deleteSnippet, undoDelete } from '../../lib/snippetsStore';
 import { runSingleSnippet, runSequenceSnippet } from '../../lib/runEngine';
 import { syncVariablesFromValues } from '../../lib/variables';
-import { showContextMenu, toggleCopyDropdown } from '../../lib/menus';
+import { CardContextMenu } from './CardContextMenu';
+import { CopyAsDropdown } from './CopyAsDropdown';
 import { openModal } from '../../store/useEditorStore';
 import { openDetails } from '../../store/useDetailsStore';
 import { groupsForSnippet } from '../../store/useGroupsStore';
@@ -40,11 +43,13 @@ interface CardProps {
   selected: boolean;
   selectMode: boolean;
   selectedForBatch: boolean;
+  /** Which edge (if any) should show the drag-and-drop insertion line — see SnippetList.tsx's own comment on how this is derived. */
+  dropIndicator: 'before' | 'after' | null;
   onSelectForBatch: (id: string, selected: boolean) => void;
   onSelectCard: (index: number) => void;
 }
 
-export function Card({ snippet, index, reorderable, selected, selectMode, selectedForBatch, onSelectForBatch, onSelectCard }: CardProps) {
+export function Card({ snippet, index, reorderable, selected, selectMode, selectedForBatch, dropIndicator, onSelectForBatch, onSelectCard }: CardProps) {
   const cardRef = useRef<HTMLDivElement>(null);
   const outputRef = useRef<HTMLDivElement>(null);
   const runBtnRef = useRef<HTMLButtonElement>(null);
@@ -56,10 +61,22 @@ export function Card({ snippet, index, reorderable, selected, selectMode, select
   const [paramNames, setParamNames] = useState<string[] | null>(null);
   const [notesOpen, setNotesOpen] = useState(false);
   const [copyLabel, setCopyLabel] = useState(false);
+  const [copyOutputCopied, setCopyOutputCopied] = useState(false);
 
   const colors = tagColors(snippet.tag);
   const memberGroups: Group[] = groupsForSnippet(snippet.id);
   const metaText = buildCardMetaText(snippet);
+
+  // Manual-reorder drag (@dnd-kit/sortable) — `disabled` rather than not
+  // calling the hook at all, since hooks can't be called conditionally;
+  // disabled just makes `listeners` inert and `isDragging` permanently
+  // false. `setNodeRef` measures/positions the row itself; `listeners` are
+  // spread only onto the small drag-handle span below (not the whole card),
+  // matching the original's handle-only drag source.
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: snippet.id,
+    disabled: !reorderable,
+  });
 
   // Mirrors buildCard()'s post-construction call: patch Start/Stop label,
   // Restart's disabled state, and the output panel to match whatever's
@@ -102,83 +119,43 @@ export function Card({ snippet, index, reorderable, selected, selectMode, select
     if (names.length > 0) setParamNames(names);
   }
 
-  function handleDelete(e: React.MouseEvent) {
-    e.stopPropagation();
-    void (async () => {
-      // A background snippet's still-live process has no card left to
-      // control once the card itself is gone — stop it first so deleting
-      // the snippet can never leave an orphaned, now-uncontrollable process
-      // running behind the scenes.
-      if (snippet.background && isRunningStatus(state.runningProcesses[snippet.id]?.status)) {
-        await stopBackground(snippet);
-      }
-      const result = await deleteSnippet(snippet.id);
-      if (result) {
-        showToast(`Deleted "${result.removed.name}"`, 'info', 'Undo', () => undoDelete(result.removed, result.index));
-      }
-    })();
+  // Shared by the Delete button and the context menu's Delete item — kept
+  // event-argument-free so both call sites (a click handler and Radix's
+  // onSelect) can pass it directly.
+  async function doDelete() {
+    // A background snippet's still-live process has no card left to
+    // control once the card itself is gone — stop it first so deleting
+    // the snippet can never leave an orphaned, now-uncontrollable process
+    // running behind the scenes.
+    if (snippet.background && isRunningStatus(state.runningProcesses[snippet.id]?.status)) {
+      await stopBackground(snippet);
+    }
+    const result = await deleteSnippet(snippet.id);
+    if (result) {
+      showToast(`Deleted "${result.removed.name}"`, 'info', 'Undo', () => undoDelete(result.removed, result.index));
+    }
   }
 
-  // --- drag-to-reorder (native HTML5 DnD, same pattern as the original) ---
-  function handleDragStart(e: React.DragEvent) {
-    state.dragSrcId = snippet.id;
-    cardRef.current?.classList.add('dragging');
-    e.dataTransfer.effectAllowed = 'move';
-    e.dataTransfer.setData('text/plain', snippet.id);
-  }
-  function handleDragEnd() {
-    cardRef.current?.classList.remove('dragging');
-    clearDragOverStyles();
-    state.dragSrcId = null;
-  }
-  function clearDragOverStyles() {
-    document.querySelectorAll('.drag-over-top, .drag-over-bottom').forEach((el) => {
-      el.classList.remove('drag-over-top', 'drag-over-bottom');
-    });
-  }
-  function handleDragOver(e: React.DragEvent) {
-    if (!state.dragSrcId || state.dragSrcId === snippet.id) return;
-    e.preventDefault();
-    const rect = cardRef.current!.getBoundingClientRect();
-    const before = e.clientY - rect.top < rect.height / 2;
-    clearDragOverStyles();
-    cardRef.current?.classList.add(before ? 'drag-over-top' : 'drag-over-bottom');
-  }
-  function handleDragLeave() {
-    cardRef.current?.classList.remove('drag-over-top', 'drag-over-bottom');
-  }
-  async function handleDrop(e: React.DragEvent) {
-    e.preventDefault();
-    clearDragOverStyles();
-    if (!state.dragSrcId || state.dragSrcId === snippet.id) return;
-    const snippets = state.snippets as Snippet[];
-    const fromIdx = snippets.findIndex((s) => s.id === state.dragSrcId);
-    if (fromIdx < 0) return;
-    const rect = cardRef.current!.getBoundingClientRect();
-    const before = e.clientY - rect.top < rect.height / 2;
-    const [moved] = snippets.splice(fromIdx, 1);
-    let insertAt = snippets.findIndex((s) => s.id === snippet.id);
-    if (!before) insertAt += 1;
-    snippets.splice(insertAt, 0, moved);
-    state.dragSrcId = null;
-    await persistSnippets();
+  function handleDelete(e: React.MouseEvent) {
+    e.stopPropagation();
+    void doDelete();
   }
 
   return (
+    <CardContextMenu snippet={snippet} cardRef={cardRef} onDelete={doDelete}>
     <div
-      ref={cardRef}
-      className={'card' + (selected ? ' selected' : '')}
+      ref={(el) => { cardRef.current = el; setNodeRef(el); }}
+      className={
+        'card' +
+        (selected ? ' selected' : '') +
+        (isDragging ? ' dragging' : '') +
+        (dropIndicator === 'before' ? ' drag-over-top' : dropIndicator === 'after' ? ' drag-over-bottom' : '')
+      }
+      style={{ transform: CSS.Transform.toString(transform), transition }}
       data-index={index}
       data-snippet-id={snippet.id}
       onClick={() => onSelectCard(index)}
-      onContextMenu={(e) => {
-        e.preventDefault();
-        onSelectCard(index);
-        if (cardRef.current) showContextMenu(e.clientX, e.clientY, snippet, cardRef.current);
-      }}
-      onDragOver={reorderable ? handleDragOver : undefined}
-      onDragLeave={reorderable ? handleDragLeave : undefined}
-      onDrop={reorderable ? handleDrop : undefined}
+      onContextMenu={() => onSelectCard(index)}
     >
       <div className="card-header">
         {selectMode ? (
@@ -193,9 +170,8 @@ export function Card({ snippet, index, reorderable, selected, selectMode, select
           <span
             className="drag-handle"
             title="Drag to reorder"
-            draggable
-            onDragStart={handleDragStart}
-            onDragEnd={handleDragEnd}
+            {...attributes}
+            {...listeners}
             dangerouslySetInnerHTML={{
               __html:
                 '<svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><circle cx="8" cy="6" r="1.6"/><circle cx="16" cy="6" r="1.6"/><circle cx="8" cy="12" r="1.6"/><circle cx="16" cy="12" r="1.6"/><circle cx="8" cy="18" r="1.6"/><circle cx="16" cy="18" r="1.6"/></svg>',
@@ -213,10 +189,10 @@ export function Card({ snippet, index, reorderable, selected, selectMode, select
           <div className="card-title-row">
             <div className="card-title">{snippet.name}</div>
             {snippet.elevated && (
-              <span className="admin-badge" title="Runs as Administrator (UAC prompt)" dangerouslySetInnerHTML={{ __html: iconSvg('admin') }} />
+              <span className="admin-badge" title="Runs as Administrator (UAC prompt)"><Lock size={12} /></span>
             )}
             {snippet.schedule?.enabled && (
-              <span className="schedule-badge" title="Runs automatically on a schedule" dangerouslySetInnerHTML={{ __html: iconSvg('clock') }} />
+              <span className="schedule-badge" title="Runs automatically on a schedule"><Clock size={11} /></span>
             )}
             {snippet.background && (
               <span
@@ -226,8 +202,9 @@ export function Card({ snippet, index, reorderable, selected, selectMode, select
                     ? 'Background process (Start/Stop) — restarts automatically if it crashes'
                     : 'Background process (Start/Stop instead of run-once)'
                 }
-                dangerouslySetInnerHTML={{ __html: iconSvg('terminal') }}
-              />
+              >
+                <SquareTerminal size={12} />
+              </span>
             )}
             {memberGroups.length > 0 && (
               <span
@@ -237,8 +214,9 @@ export function Card({ snippet, index, reorderable, selected, selectMode, select
                     ? `In group: ${memberGroups[0].name || '(untitled group)'}${memberGroups[0].description ? ` — ${memberGroups[0].description}` : ''}`
                     : `In groups: ${memberGroups.map((g) => g.name || '(untitled group)').join(', ')}`
                 }
-                dangerouslySetInnerHTML={{ __html: iconSvg('layers') }}
-              />
+              >
+                <Layers size={12} />
+              </span>
             )}
           </div>
           {metaText && <div className="card-meta">{metaText}</div>}
@@ -253,45 +231,49 @@ export function Card({ snippet, index, reorderable, selected, selectMode, select
             type="button"
             className="open-folder-btn"
             title={`Open ${snippet.cwd} in File Explorer`}
-            dangerouslySetInnerHTML={{ __html: iconSvg('folder') }}
             onClick={async (e) => {
               e.stopPropagation();
               const res = await window.electronAPI.openPath(snippet.cwd!);
               if (!res.ok) showToast(res.error || 'Could not open that folder', 'error');
             }}
-          />
+          >
+            <Folder size={12} />
+          </button>
         )}
         <button
           type="button"
           className="terminal-btn"
           title="Open in a real, interactive terminal window"
-          dangerouslySetInnerHTML={{ __html: iconSvg('terminal') }}
           onClick={async (e) => {
             e.stopPropagation();
             const res = await window.electronAPI.openTerminal({ command: runnableTextOf(snippet), cwd: snippet.cwd ?? undefined, shell: snippet.shell });
             if (!res.ok) showToast(res.error || 'Could not open a terminal', 'error');
           }}
-        />
+        >
+          <SquareTerminal size={12} />
+        </button>
         <button
           type="button"
           className="details-btn"
           title="Details (dependencies, schedule, stats)"
-          dangerouslySetInnerHTML={{ __html: iconSvg('info') }}
           onClick={(e) => {
             e.stopPropagation();
             openDetails(snippet);
           }}
-        />
+        >
+          <Info size={11} />
+        </button>
         <button
           type="button"
           className={'pin-btn' + (snippet.pinned ? ' pinned' : '')}
           title={snippet.pinned ? 'Unpin' : 'Pin to top'}
-          dangerouslySetInnerHTML={{ __html: starIconSvg(snippet.pinned) }}
           onClick={async (e) => {
             e.stopPropagation();
             await togglePin(snippet.id);
           }}
-        />
+        >
+          <Star size={15} fill={snippet.pinned ? 'currentColor' : 'none'} />
+        </button>
       </div>
 
       {snippet.steps && snippet.steps.length ? (
@@ -316,8 +298,10 @@ export function Card({ snippet, index, reorderable, selected, selectMode, select
               e.stopPropagation();
               setNotesOpen((v) => !v);
             }}
-            dangerouslySetInnerHTML={{ __html: `${iconSvg('info')}<span>Notes</span>` }}
-          />
+          >
+            <Info size={11} />
+            <span>Notes</span>
+          </button>
           <div className="card-notes" hidden={!notesOpen}>
             {snippet.notes}
           </div>
@@ -328,7 +312,8 @@ export function Card({ snippet, index, reorderable, selected, selectMode, select
         {snippet.background ? (
           <>
             <button ref={startStopBtnRef} type="button" className="btn btn-small btn-primary bg-startstop-btn" onClick={handleStartStopClick}>
-              {iconSvg('play')}
+              {/* Overwritten imperatively by processEngine.ts's syncCardBackgroundUI as soon as this snippet's live status is known (see the useEffect above) — this is just the pre-sync initial paint. */}
+              <Play size={13} fill="currentColor" stroke="none" />
               <span>Start</span>
             </button>
             <button
@@ -337,15 +322,19 @@ export function Card({ snippet, index, reorderable, selected, selectMode, select
               className="btn btn-small bg-restart-btn"
               title="Restart"
               disabled
-              dangerouslySetInnerHTML={{ __html: iconSvg('rerun') }}
               onClick={(e) => {
                 e.stopPropagation();
                 restartBackground(snippet);
               }}
-            />
+            >
+              <RotateCcw size={12} />
+            </button>
           </>
         ) : (
-          <button ref={runBtnRef} type="button" className="btn btn-primary" onClick={handleRunClick} dangerouslySetInnerHTML={{ __html: `${iconSvg('play')}<span>Run</span>` }} />
+          <button ref={runBtnRef} type="button" className="btn btn-primary" onClick={handleRunClick}>
+            <Play size={13} fill="currentColor" stroke="none" />
+            <span>Run</span>
+          </button>
         )}
 
         <div className="copy-split">
@@ -359,22 +348,36 @@ export function Card({ snippet, index, reorderable, selected, selectMode, select
               setCopyLabel(true);
               setTimeout(() => setCopyLabel(false), 1200);
             }}
-            dangerouslySetInnerHTML={{ __html: copyLabel ? `${iconSvg('check')}<span>Copied!</span>` : `${iconSvg('copy')}<span>Copy</span>` }}
-          />
-          <button
-            ref={copyCaretBtnRef}
-            type="button"
-            className="copy-caret-btn"
-            title="Copy as…"
-            dangerouslySetInnerHTML={{ __html: iconSvg('chevronDown') }}
-            onClick={(e) => {
-              e.stopPropagation();
-              if (copyCaretBtnRef.current) toggleCopyDropdown(copyCaretBtnRef.current, snippet);
-            }}
-          />
+          >
+            {copyLabel ? (
+              <>
+                <Check size={13} />
+                <span>Copied!</span>
+              </>
+            ) : (
+              <>
+                <Copy size={13} />
+                <span>Copy</span>
+              </>
+            )}
+          </button>
+          <CopyAsDropdown snippet={snippet}>
+            <button
+              ref={copyCaretBtnRef}
+              type="button"
+              className="copy-caret-btn"
+              title="Copy as…"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <ChevronDown size={11} />
+            </button>
+          </CopyAsDropdown>
         </div>
 
-        <button type="button" className="btn" onClick={(e) => { e.stopPropagation(); openModal(snippet); }} dangerouslySetInnerHTML={{ __html: `${iconSvg('edit')}<span>Edit</span>` }} />
+        <button type="button" className="btn" onClick={(e) => { e.stopPropagation(); openModal(snippet); }}>
+          <Pencil size={13} />
+          <span>Edit</span>
+        </button>
         <button
           type="button"
           className="btn"
@@ -383,10 +386,15 @@ export function Card({ snippet, index, reorderable, selected, selectMode, select
             const source = await duplicateSnippet(snippet.id);
             if (source) showToast(`Duplicated "${source.name}"`);
           }}
-          dangerouslySetInnerHTML={{ __html: `${iconSvg('duplicate')}<span>Duplicate</span>` }}
-        />
+        >
+          <CopyPlus size={13} />
+          <span>Duplicate</span>
+        </button>
         <div className="btn-spacer" />
-        <button type="button" className="btn btn-danger" onClick={handleDelete} dangerouslySetInnerHTML={{ __html: `${iconSvg('trash')}<span>Delete</span>` }} />
+        <button type="button" className="btn btn-danger" onClick={handleDelete}>
+          <Trash2 size={13} />
+          <span>Delete</span>
+        </button>
       </div>
 
       {/* Inserted before the output panel — matches the original's
@@ -426,34 +434,32 @@ export function Card({ snippet, index, reorderable, selected, selectMode, select
               className="copy-output-btn"
               title="Copy output"
               hidden
-              dangerouslySetInnerHTML={{ __html: iconSvg('copy') }}
               onClick={async (e) => {
                 e.stopPropagation();
                 const text = (cardRef.current as unknown as { _lastOutputText?: string } | null)?._lastOutputText || '';
                 await window.electronAPI.copyText(text);
-                if (copyOutputBtnRef.current) {
-                  const original = copyOutputBtnRef.current.innerHTML;
-                  copyOutputBtnRef.current.innerHTML = iconSvg('check');
-                  setTimeout(() => {
-                    if (copyOutputBtnRef.current) copyOutputBtnRef.current.innerHTML = original;
-                  }, 1000);
-                }
+                setCopyOutputCopied(true);
+                setTimeout(() => setCopyOutputCopied(false), 1000);
               }}
-            />
+            >
+              {copyOutputCopied ? <Check size={13} /> : <Copy size={13} />}
+            </button>
             <button
               type="button"
               className="close-output-btn"
               title="Close output"
-              dangerouslySetInnerHTML={{ __html: iconSvg('close') }}
               onClick={(e) => {
                 e.stopPropagation();
                 if (outputRef.current) outputRef.current.hidden = true;
               }}
-            />
+            >
+              <X size={11} />
+            </button>
           </div>
         </div>
         <div className="card-output-body" />
       </div>
     </div>
+    </CardContextMenu>
   );
 }

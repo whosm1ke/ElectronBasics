@@ -5,8 +5,8 @@
 // modals/drawers, as opposed to the inline-content pattern used for
 // cards/tags/favorites).
 import { useState } from 'react';
+import { RotateCcw, Check, Copy, X } from 'lucide-react';
 import type { HistoryEntry } from '@shared/types';
-import { iconSvg } from '../../lib/icons';
 import { escapeHtml, timeAgo } from '../../lib/utils';
 import { useHistoryStore, closeHistory, clearHistory, rerunFromHistory, setHistoryQuery } from '../../store/useHistoryStore';
 
@@ -21,7 +21,10 @@ function HistoryItem({ entry }: { entry: HistoryEntry }) {
       </div>
       <div className="history-item-command">{entry.command}</div>
       <div className="history-item-actions">
-        <button type="button" className="btn" onClick={() => rerunFromHistory(entry)} dangerouslySetInnerHTML={{ __html: `${iconSvg('rerun')}<span>Re-run</span>` }} />
+        <button type="button" className="btn" onClick={() => rerunFromHistory(entry)}>
+          <RotateCcw size={12} />
+          <span>Re-run</span>
+        </button>
         <button
           type="button"
           className="btn"
@@ -30,8 +33,19 @@ function HistoryItem({ entry }: { entry: HistoryEntry }) {
             setCopied(true);
             setTimeout(() => setCopied(false), 1200);
           }}
-          dangerouslySetInnerHTML={{ __html: copied ? `${iconSvg('check')}<span>Copied!</span>` : `${iconSvg('copy')}<span>Copy</span>` }}
-        />
+        >
+          {copied ? (
+            <>
+              <Check size={13} />
+              <span>Copied!</span>
+            </>
+          ) : (
+            <>
+              <Copy size={13} />
+              <span>Copy</span>
+            </>
+          )}
+        </button>
       </div>
     </div>
   );
@@ -53,16 +67,9 @@ export function HistoryDrawer() {
             <button type="button" className="btn btn-ghost btn-danger" onClick={() => clearHistory()}>
               Clear
             </button>
-            <button
-              type="button"
-              className="icon-btn"
-              title="Close (Esc)"
-              onClick={closeHistory}
-              dangerouslySetInnerHTML={{
-                __html:
-                  '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>',
-              }}
-            />
+            <button type="button" className="icon-btn" title="Close (Esc)" onClick={closeHistory}>
+              <X size={16} />
+            </button>
           </div>
         </div>
         <div className="drawer-search-row">

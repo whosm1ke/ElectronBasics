@@ -1,30 +1,26 @@
 // PipelinesModal.tsx — the Pipelines screen: a saved-list view (mirrors
 // GroupsModal.tsx) plus a node-graph canvas editor with a selection-driven
-// inspector side panel. Ported from modules/pipeline-editor.js — the
-// single riskiest module in this migration (per the migration plan) since
-// its node-dragging and edge-line rendering are deliberately NOT rewritten
-// into pure React state:
+// inspector side panel. Ported from modules/pipeline-editor.js, then from
+// a hand-rolled imperative canvas (mousedown/mousemove/mouseup dragging,
+// getBoundingClientRect()-based edge-line recomputation — CLAUDE.md used to
+// document this as the app's "one deliberately-not-fully-declarative piece
+// of UI") onto @xyflow/react (see pipeline/PipelineCanvas.tsx) — real
+// pan/zoom, multi-select, keyboard delete, a minimap, and dagre-based
+// auto-layout (pipelineLayout.ts) replaced all of that by hand.
 //
-// - Dragging a node mutates its DOM position directly (ref + style.left/top)
-//   during the gesture, exactly like the original, and only commits {x,y}
-//   into React state (this component's own `nodes` useState — the "working
-//   copy," discarded on Cancel) on mouseup. Doing this via setState per
-//   mousemove frame would re-render the whole graph 60x/sec for no benefit.
-// - Edge <line> positions are recomputed from the *actual rendered* port
-//   DOM elements (getBoundingClientRect()) via imperative attribute writes,
-//   not derived from node.x/y in JSX — so a line always lands exactly on
-//   the visible port regardless of a node's content height, matching the
-//   original's portPos()/renderEdges(). This recompute runs after every
-//   render (nodes moved/added/removed) and, throttled via
-//   requestAnimationFrame, on every drag frame.
-//
-// Everything else (list view, inspector, snippet picker, auto-arrange) is
-// plain React state/JSX — no reason for those to be imperative.
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+// EditorView still owns `nodes`/`edges` as this app's own persisted shape
+// (PipelineNode[]/PipelineEdge[]) in local state — the working copy,
+// discarded on Cancel, same contract as before — and hands them to
+// PipelineCanvas as plain, controlled data; only PipelineCanvas.tsx and
+// pipelineFlow.ts need to know React Flow's own Node/Edge shape exists.
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { Play, Pencil, Wand2, Copy, Share2 } from 'lucide-react';
 import type { Pipeline, PipelineNode, PipelineEdge, EdgeCondition, Snippet } from '@shared/types';
-import { iconSvg } from '../../lib/icons';
-import { snippetIcon, newId, pipelineEdgeCreatesCycle, SHELL_LABELS } from '../../lib/utils';
-import { showToast } from '../../store/useToastStore';
+import { snippetIcon, newId, SHELL_LABELS, pipelineConditionLabel, tryCreatePipelineEdge } from '../../lib/utils';
+import { showToast } from '../../lib/toast';
+import { ThemedSelect } from '../shared/ThemedSelect';
+import { PipelineCanvas, type Selection } from './pipeline/PipelineCanvas';
+import { layoutPipelineNodes } from '../../lib/pipelineLayout';
 import {
   usePipelinesStore,
   openPipelineEditor,
@@ -38,6 +34,18 @@ import { persistSnippets } from '../../lib/snippetsStore';
 import { onBatchModalClosed } from '../../lib/events';
 import { runPipelineGraph } from '../../lib/pipelineEngine';
 
+/** Every saved snippet, formatted for the shared picker menu — used by both "+ Add step" and "Change step…", which both pick a snippet the same way. */
+function snippetPickerItems(): PickerItem[] {
+  return (state.snippets as Snippet[]).map((s) => ({
+    id: s.id,
+    label: (
+      <>
+        {snippetIcon(s)} {s.name}
+      </>
+    ),
+  }));
+}
+
 const CONDITION_OPTIONS: [EdgeCondition, string][] = [
   ['success', 'Succeeds (exit code 0)'],
   ['failure', 'Fails (non-zero exit code)'],
@@ -45,25 +53,6 @@ const CONDITION_OPTIONS: [EdgeCondition, string][] = [
   ['exitCode', 'Exits with a specific code'],
   ['outputContains', 'Output contains text'],
 ];
-
-function conditionLabel(edge: PipelineEdge): string {
-  switch (edge.condition) {
-    case 'success':
-      return 'on success';
-    case 'failure':
-      return 'on failure';
-    case 'always':
-      return 'always';
-    case 'exitCode':
-      return `exit = ${edge.value ?? '?'}`;
-    case 'outputContains':
-      return `has "${edge.value ?? ''}"`;
-    default:
-      return edge.condition;
-  }
-}
-
-type Selection = { type: 'node' | 'edge'; id: string } | null;
 
 // --- Pending "reopen after a pipeline run's results modal closes" — same
 // idea as the original's module-level pendingPipelineReturn, needed because
@@ -104,8 +93,14 @@ function ListView() {
                 </div>
                 {p.description && <div className="group-row-description">{p.description}</div>}
               </div>
-              <button type="button" className="btn btn-small btn-primary" onClick={() => runSaved(p)} dangerouslySetInnerHTML={{ __html: `${iconSvg('play')}<span>Run</span>` }} />
-              <button type="button" className="btn btn-small" onClick={() => openPipelineEditor(p)} dangerouslySetInnerHTML={{ __html: `${iconSvg('edit')}<span>Edit</span>` }} />
+              <button type="button" className="btn btn-small btn-primary" onClick={() => runSaved(p)}>
+                <Play size={13} fill="currentColor" stroke="none" />
+                <span>Run</span>
+              </button>
+              <button type="button" className="btn btn-small" onClick={() => openPipelineEditor(p)}>
+                <Pencil size={13} />
+                <span>Edit</span>
+              </button>
             </div>
           ))
         )}
@@ -124,15 +119,26 @@ function ListView() {
   );
 }
 
+interface PickerItem {
+  id: string;
+  label: ReactNode;
+}
+
+// Generic enough to back every "pick one of these" floating menu in the
+// editor: "+ Add step"/"Change step…" (items = every snippet) and the
+// Inspector's "+ Connect to…" (items = every OTHER step in this pipeline) —
+// same look, same positioning/dismiss logic, just a different item list and
+// empty-state message per call site.
 interface SnippetPickerState {
   anchor: DOMRect;
-  onPick: (snippetId: string) => void;
+  items: PickerItem[];
+  emptyLabel: string;
+  onPick: (id: string) => void;
 }
 
 function SnippetPickerMenu({ picker, onClose }: { picker: SnippetPickerState; onClose: () => void }) {
   const menuRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
-  const snippets = state.snippets as Snippet[];
 
   useLayoutEffect(() => {
     const menu = menuRef.current;
@@ -159,22 +165,20 @@ function SnippetPickerMenu({ picker, onClose }: { picker: SnippetPickerState; on
       id="pipelineSnippetPickerMenu"
       style={pos ? { left: pos.left, top: pos.top, visibility: 'visible' } : { visibility: 'hidden' }}
     >
-      {snippets.length === 0 ? (
-        <div className="context-menu-item">No snippets yet</div>
+      {picker.items.length === 0 ? (
+        <div className="context-menu-item">{picker.emptyLabel}</div>
       ) : (
-        snippets.map((s) => (
+        picker.items.map((item) => (
           <button
             type="button"
-            key={s.id}
+            key={item.id}
             className="context-menu-item"
             onClick={() => {
-              picker.onPick(s.id);
+              picker.onPick(item.id);
               onClose();
             }}
           >
-            <span>
-              {snippetIcon(s)} {s.name}
-            </span>
+            <span>{item.label}</span>
           </button>
         ))
       )}
@@ -197,7 +201,7 @@ function Inspector({
   setNodes: (n: PipelineNode[]) => void;
   setEdges: (e: PipelineEdge[]) => void;
   setSelection: (s: Selection) => void;
-  openPicker: (anchor: HTMLElement, onPick: (id: string) => void) => void;
+  openPicker: (anchor: HTMLElement, items: PickerItem[], emptyLabel: string, onPick: (id: string) => void) => void;
 }) {
   if (!selection) return null;
   const snippets = state.snippets as Snippet[];
@@ -210,6 +214,31 @@ function Inspector({
   function removeEdge(edgeId: string) {
     setEdges(edges.filter((e) => e.id !== edgeId));
     setSelection(null);
+  }
+  /** Copies a step's snippet reference (never its connections — a duplicate starts unconnected, same as adding a brand-new step) at a small offset so it doesn't sit exactly on top of the original. */
+  function duplicateNode(node: PipelineNode) {
+    const copy: PipelineNode = { id: newId('node'), snippetId: node.snippetId, x: node.x + 30, y: node.y + 30 };
+    setNodes([...nodes, copy]);
+    setSelection({ type: 'node', id: copy.id });
+  }
+  /** The explicit, precision-drag-free way to connect two steps — see tryCreatePipelineEdge's own header comment on why this exists alongside dragging a connection on the canvas. */
+  function connectFrom(node: PipelineNode) {
+    const targets: PickerItem[] = nodes
+      .filter((n) => n.id !== node.id)
+      .map((n) => {
+        const s = snippets.find((sn) => sn.id === n.snippetId);
+        return { id: n.id, label: s ? <>{snippetIcon(s)} {s.name}</> : <>⚠ (deleted snippet)</> };
+      });
+    return (anchor: HTMLElement) =>
+      openPicker(anchor, targets, 'No other steps to connect to yet', (targetId) => {
+        const result = tryCreatePipelineEdge(edges, node.id, targetId);
+        if (!result.ok) {
+          showToast(result.error, 'error');
+          return;
+        }
+        setEdges([...edges, result.edge]);
+        setSelection({ type: 'edge', id: result.edge.id });
+      });
   }
 
   if (selection.type === 'node') {
@@ -230,12 +259,20 @@ function Inspector({
           type="button"
           className="btn btn-small"
           onClick={(e) =>
-            openPicker(e.currentTarget, (newSnippetId) => {
+            openPicker(e.currentTarget, snippetPickerItems(), 'No snippets yet', (newSnippetId) => {
               setNodes(nodes.map((n) => (n.id === node.id ? { ...n, snippetId: newSnippetId } : n)));
             })
           }
         >
           Change step…
+        </button>
+        <button type="button" className="btn btn-small" onClick={() => duplicateNode(node)}>
+          <Copy size={12} />
+          <span>Duplicate step</span>
+        </button>
+        <button type="button" className="btn btn-small" onClick={(e) => connectFrom(node)(e.currentTarget)}>
+          <Share2 size={12} />
+          <span>Connect to…</span>
         </button>
         <button type="button" className="btn btn-small btn-danger" onClick={() => removeNode(node.id)}>
           Delete step
@@ -248,7 +285,7 @@ function Inspector({
               const targetSnippet = targetNode && snippets.find((s) => s.id === targetNode.snippetId);
               return (
                 <button type="button" key={edge.id} className="pipeline-inspector-edge-row" onClick={() => setSelection({ type: 'edge', id: edge.id })}>
-                  {conditionLabel(edge)} → {targetSnippet ? targetSnippet.name : '?'}
+                  {pipelineConditionLabel(edge)} → {targetSnippet ? targetSnippet.name : '?'}
                 </button>
               );
             })}
@@ -277,26 +314,17 @@ function Inspector({
         {fromSnippet ? fromSnippet.name : '?'} → {toSnippet ? toSnippet.name : '?'}
       </div>
       <label className="field-label">Run the next step when this one…</label>
-      <div className="select-wrap">
-        <select
-          className="field-input"
-          value={edge.condition}
-          onChange={(e) => {
-            const condition = e.target.value as EdgeCondition;
-            let value = edge.value;
-            if (condition === 'exitCode' && typeof value !== 'number') value = 0;
-            else if (condition === 'outputContains' && typeof value !== 'string') value = '';
-            else if (condition !== 'exitCode' && condition !== 'outputContains') value = null;
-            updateEdge({ condition, value });
-          }}
-        >
-          {CONDITION_OPTIONS.map(([value, text]) => (
-            <option value={value} key={value}>
-              {text}
-            </option>
-          ))}
-        </select>
-      </div>
+      <ThemedSelect
+        value={edge.condition}
+        options={CONDITION_OPTIONS.map(([value, label]) => ({ value, label }))}
+        onChange={(condition) => {
+          let value = edge.value;
+          if (condition === 'exitCode' && typeof value !== 'number') value = 0;
+          else if (condition === 'outputContains' && typeof value !== 'string') value = '';
+          else if (condition !== 'exitCode' && condition !== 'outputContains') value = null;
+          updateEdge({ condition, value });
+        }}
+      />
       {needsValue && (
         <input
           type={edge.condition === 'exitCode' ? 'number' : 'text'}
@@ -321,185 +349,24 @@ function EditorView({ editingId }: { editingId: string | null }) {
   const [description, setDescription] = useState(editingPipeline?.description || '');
   // The working copy — only written back to the saved list on Save; Cancel
   // (or just navigating away) discards it. Deep-copied from the saved
-  // pipeline so mutating it here never touches the saved one.
+  // pipeline so mutating it here never touches the saved one. Handed to
+  // PipelineCanvas as plain, controlled data — see this file's header
+  // comment on why the React Flow shape itself never leaks up to here.
   const [nodes, setNodes] = useState<PipelineNode[]>(() => (editingPipeline ? editingPipeline.nodes.map((n) => ({ ...n })) : []));
   const [edges, setEdges] = useState<PipelineEdge[]>(() => (editingPipeline ? editingPipeline.edges.map((e) => ({ ...e })) : []));
   const [selection, setSelection] = useState<Selection>(null);
   const [picker, setPicker] = useState<SnippetPickerState | null>(null);
-
-  const canvasRef = useRef<HTMLDivElement>(null);
-  const svgRef = useRef<SVGSVGElement>(null);
-  const nodeElRefs = useRef(new Map<string, HTMLDivElement>());
-  const lineElRefs = useRef(new Map<string, SVGLineElement>());
-  const labelElRefs = useRef(new Map<string, HTMLButtonElement>());
-
-  function portPos(nodeId: string, side: 'in' | 'out'): { x: number; y: number } | null {
-    const nodeEl = nodeElRefs.current.get(nodeId);
-    const canvasEl = canvasRef.current;
-    if (!nodeEl || !canvasEl) return null;
-    const portEl = nodeEl.querySelector(`.pipeline-port-${side}`);
-    if (!portEl) return null;
-    const canvasRect = canvasEl.getBoundingClientRect();
-    const portRect = portEl.getBoundingClientRect();
-    return { x: portRect.left + portRect.width / 2 - canvasRect.left, y: portRect.top + portRect.height / 2 - canvasRect.top };
-  }
-
-  function recomputeEdges() {
-    edges.forEach((edge) => {
-      const from = portPos(edge.from, 'out');
-      const to = portPos(edge.to, 'in');
-      const line = lineElRefs.current.get(edge.id);
-      const label = labelElRefs.current.get(edge.id);
-      if (!from || !to) return;
-      if (line) {
-        line.setAttribute('x1', String(from.x));
-        line.setAttribute('y1', String(from.y));
-        line.setAttribute('x2', String(to.x));
-        line.setAttribute('y2', String(to.y));
-      }
-      if (label) {
-        label.style.left = `${(from.x + to.x) / 2}px`;
-        label.style.top = `${(from.y + to.y) / 2}px`;
-      }
-    });
-  }
-
-  // Recompute edge lines after every render that could move a port (nodes
-  // added/removed/reordered, edges added/removed) — a drag's own rAF loop
-  // (see wireNodeDrag below) handles the moving-target case without
-  // waiting for a React render.
-  useLayoutEffect(() => {
-    recomputeEdges();
-  });
+  const [fitViewSignal, setFitViewSignal] = useState(0);
 
   useEffect(() => {
-    if (canvasRef.current) canvasRef.current.parentElement?.scrollTo(0, 0);
     const t = setTimeout(() => document.getElementById('pipelineNameInput')?.focus(), 0);
     return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  function addEdge(fromId: string, toId: string) {
-    if (fromId === toId) return;
-    if (edges.some((e) => e.from === fromId && e.to === toId)) {
-      showToast('These two steps are already connected', 'error');
-      return;
-    }
-    if (pipelineEdgeCreatesCycle(edges, fromId, toId)) {
-      showToast("Can't connect — that would create a loop", 'error');
-      return;
-    }
-    const edge: PipelineEdge = { id: newId('edge'), from: fromId, to: toId, condition: 'success', value: null };
-    setEdges([...edges, edge]);
-    setSelection({ type: 'edge', id: edge.id });
-  }
-
-  /** Mousedown-drag on a node body (not its ports) repositions it; a mousedown+mouseup with no real movement is treated as a click (selects it) instead. Position is mutated directly on the DOM during the drag (same reasoning as the original — see this file's header comment) and only committed to React state on mouseup. */
-  function onNodeMouseDown(e: React.MouseEvent, node: PipelineNode) {
-    if ((e.target as HTMLElement).closest('.pipeline-port')) return; // that's a connection drag
-    e.preventDefault();
-    const el = nodeElRefs.current.get(node.id);
-    const canvasEl = canvasRef.current;
-    if (!el || !canvasEl) return;
-    const canvasRect = canvasEl.getBoundingClientRect();
-    const offsetX = e.clientX - canvasRect.left - node.x;
-    const offsetY = e.clientY - canvasRect.top - node.y;
-    const startX = e.clientX;
-    const startY = e.clientY;
-    let moved = false;
-    let x = node.x;
-    let y = node.y;
-    let rafPending = false;
-
-    function onMove(ev: MouseEvent) {
-      if (Math.abs(ev.clientX - startX) > 3 || Math.abs(ev.clientY - startY) > 3) moved = true;
-      const rect = canvasEl!.getBoundingClientRect();
-      x = Math.max(0, ev.clientX - rect.left - offsetX);
-      y = Math.max(0, ev.clientY - rect.top - offsetY);
-      el!.style.left = `${x}px`;
-      el!.style.top = `${y}px`;
-      if (!rafPending) {
-        rafPending = true;
-        requestAnimationFrame(() => {
-          rafPending = false;
-          recomputeEdgesLive();
-        });
-      }
-    }
-    function recomputeEdgesLive() {
-      edges.forEach((edge) => {
-        if (edge.from !== node.id && edge.to !== node.id) return;
-        const from = portPos(edge.from, 'out');
-        const to = portPos(edge.to, 'in');
-        const line = lineElRefs.current.get(edge.id);
-        const label = labelElRefs.current.get(edge.id);
-        if (!from || !to) return;
-        if (line) {
-          line.setAttribute('x1', String(from.x));
-          line.setAttribute('y1', String(from.y));
-          line.setAttribute('x2', String(to.x));
-          line.setAttribute('y2', String(to.y));
-        }
-        if (label) {
-          label.style.left = `${(from.x + to.x) / 2}px`;
-          label.style.top = `${(from.y + to.y) / 2}px`;
-        }
-      });
-    }
-    function onUp() {
-      document.removeEventListener('mousemove', onMove);
-      document.removeEventListener('mouseup', onUp);
-      if (moved) {
-        setNodes((prev) => prev.map((n) => (n.id === node.id ? { ...n, x, y } : n)));
-      } else {
-        setSelection({ type: 'node', id: node.id });
-      }
-    }
-    document.addEventListener('mousemove', onMove);
-    document.addEventListener('mouseup', onUp);
-  }
-
-  /** Mousedown-drag starting on the output port draws a temporary dashed line to the cursor (an ephemeral SVG element appended directly, never part of React state); releasing over another node creates the edge. */
-  function onOutPortMouseDown(e: React.MouseEvent, node: PipelineNode) {
-    e.preventDefault();
-    e.stopPropagation();
-    const svg = svgRef.current;
-    if (!svg) return;
-    const start = portPos(node.id, 'out');
-    if (!start) return;
-    const tempLine = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-    tempLine.classList.add('pipeline-edge-dragging');
-    svg.appendChild(tempLine);
-
-    function clearConnectTargetHighlight() {
-      nodeElRefs.current.forEach((el) => el.classList.remove('pipeline-node-connect-target'));
-    }
-    function onMove(ev: MouseEvent) {
-      const rect = canvasRef.current!.getBoundingClientRect();
-      tempLine.setAttribute('x1', String(start!.x));
-      tempLine.setAttribute('y1', String(start!.y));
-      tempLine.setAttribute('x2', String(ev.clientX - rect.left));
-      tempLine.setAttribute('y2', String(ev.clientY - rect.top));
-      clearConnectTargetHighlight();
-      const targetEl = (document.elementFromPoint(ev.clientX, ev.clientY) as HTMLElement | null)?.closest('.pipeline-node') as HTMLElement | null;
-      if (targetEl && targetEl.dataset.nodeId !== node.id) targetEl.classList.add('pipeline-node-connect-target');
-    }
-    function onUp(ev: MouseEvent) {
-      document.removeEventListener('mousemove', onMove);
-      document.removeEventListener('mouseup', onUp);
-      tempLine.remove();
-      clearConnectTargetHighlight();
-      const targetEl = (document.elementFromPoint(ev.clientX, ev.clientY) as HTMLElement | null)?.closest('.pipeline-node') as HTMLElement | null;
-      const targetId = targetEl?.dataset.nodeId;
-      if (targetEl && targetId && targetId !== node.id) addEdge(node.id, targetId);
-    }
-    document.addEventListener('mousemove', onMove);
-    document.addEventListener('mouseup', onUp);
-  }
-
+  /** Diagonal cascade so successive clicks of "+ Add step" don't all land in the same spot — offset by more than half NODE_WIDTH/NODE_HEIGHT so even the 2nd/3rd step is legible without immediately needing auto-arrange (dagre), which is the real layout tool once there's more than a handful of steps. */
   function nextNodePosition(): { x: number; y: number } {
     const n = nodes.length;
-    return { x: 30 + (n % 8) * 40, y: 30 + (n % 8) * 40 };
+    return { x: 60 + (n % 5) * 110, y: 60 + (n % 5) * 70 };
   }
 
   function addNode(snippetId: string) {
@@ -507,53 +374,20 @@ function EditorView({ editingId }: { editingId: string | null }) {
     const node: PipelineNode = { id: newId('node'), snippetId, x: pos.x, y: pos.y };
     setNodes([...nodes, node]);
     setSelection({ type: 'node', id: node.id });
+    // <ReactFlow fitView> only ever fires once, on this component's first
+    // mount — which for a brand-new pipeline happens against zero nodes (a
+    // no-op). Without re-fitting here too, a step (and its connection
+    // handles) can land outside the visible, clipped canvas area at this
+    // app's compact 760×620 window size and never come back into view on
+    // their own — surfaced by this rewrite's own connection-dragging tests.
+    setFitViewSignal((v) => v + 1);
   }
 
-  /** Lays every node out left-to-right in topological layers (Kahn's algorithm) — a one-click fix for a graph that's turned into a tangle after a lot of free-form dragging. */
+  /** Lays every node out left-to-right via `dagre` (pipelineLayout.ts) — a one-click fix for a graph that's turned into a tangle after a lot of free-form dragging — then fits the viewport to the result. */
   function autoArrange() {
-    const ids = nodes.map((n) => n.id);
-    if (ids.length === 0) return;
-    const remaining = new Map(ids.map((id) => [id, 0]));
-    edges.forEach((e) => remaining.set(e.to, (remaining.get(e.to) || 0) + 1));
-
-    const layerOf = new Map<string, number>();
-    const done = new Set<string>();
-    let frontier = ids.filter((id) => remaining.get(id) === 0);
-    let layer = 0;
-    while (frontier.length > 0) {
-      frontier.forEach((id) => {
-        layerOf.set(id, layer);
-        done.add(id);
-      });
-      const next = new Set<string>();
-      edges.forEach((e) => {
-        if (done.has(e.from) && !done.has(e.to)) {
-          remaining.set(e.to, (remaining.get(e.to) || 0) - 1);
-          if ((remaining.get(e.to) || 0) <= 0) next.add(e.to);
-        }
-      });
-      frontier = [...next];
-      layer += 1;
-    }
-    ids.forEach((id) => {
-      if (!layerOf.has(id)) layerOf.set(id, layer);
-    });
-
-    const byLayer = new Map<number, string[]>();
-    ids.forEach((id) => {
-      const l = layerOf.get(id)!;
-      if (!byLayer.has(l)) byLayer.set(l, []);
-      byLayer.get(l)!.push(id);
-    });
-    const COL_W = 220;
-    const ROW_H = 100;
-    const positioned = new Map<string, { x: number; y: number }>();
-    [...byLayer.keys()].sort((a, b) => a - b).forEach((l) => {
-      byLayer.get(l)!.forEach((id, row) => {
-        positioned.set(id, { x: 30 + l * COL_W, y: 30 + row * ROW_H });
-      });
-    });
-    setNodes(nodes.map((n) => ({ ...n, ...(positioned.get(n.id) || {}) })));
+    if (nodes.length === 0) return;
+    setNodes(layoutPipelineNodes(nodes, edges));
+    setFitViewSignal((v) => v + 1);
   }
 
   async function save() {
@@ -598,96 +432,40 @@ function EditorView({ editingId }: { editingId: string | null }) {
         <button
           type="button"
           className="btn btn-small"
-          onClick={(e) => setPicker({ anchor: e.currentTarget.getBoundingClientRect(), onPick: addNode })}
+          onClick={(e) => setPicker({ anchor: e.currentTarget.getBoundingClientRect(), items: snippetPickerItems(), emptyLabel: 'No snippets yet', onPick: addNode })}
         >
           + Add step
         </button>
         <button type="button" className="btn btn-small" onClick={autoArrange}>
-          Auto-arrange
+          <Wand2 size={12} />
+          <span>Auto-arrange</span>
         </button>
         <span className="hint-spacer" />
-        <span className="field-hint pipeline-toolbar-hint">Drag a step to move it · drag its right dot onto another step to connect · click a step or connection to edit it</span>
+        <span className="field-hint pipeline-toolbar-hint">
+          Drag a step to move it · drag its right dot onto another step to connect · click a step or connection to edit it · Delete key removes what's selected
+        </span>
       </div>
       <div className="pipeline-editor-body">
-        <div className="pipeline-canvas-wrap">
-          <div
-            className={'pipeline-canvas' + (nodes.length === 0 ? ' pipeline-canvas-empty-hint' : '')}
-            ref={canvasRef}
-            onMouseDown={(e) => {
-              if (e.target === canvasRef.current) setSelection(null);
-            }}
-          >
-            <svg className="pipeline-edges-svg" ref={svgRef}>
-              {edges.map((edge) => (
-                <line
-                  key={edge.id}
-                  data-edge-id={edge.id}
-                  className={selection?.type === 'edge' && selection.id === edge.id ? 'pipeline-edge-selected' : ''}
-                  ref={(el) => {
-                    if (el) lineElRefs.current.set(edge.id, el);
-                    else lineElRefs.current.delete(edge.id);
-                  }}
-                />
-              ))}
-            </svg>
-            <div className="pipeline-edge-labels">
-              {edges.map((edge) => (
-                <button
-                  type="button"
-                  key={edge.id}
-                  ref={(el) => {
-                    if (el) labelElRefs.current.set(edge.id, el);
-                    else labelElRefs.current.delete(edge.id);
-                  }}
-                  className={`pipeline-edge-label condition-${edge.condition}` + (selection?.type === 'edge' && selection.id === edge.id ? ' selected' : '')}
-                  data-edge-id={edge.id}
-                  title="Click to edit · right-click to remove"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setSelection({ type: 'edge', id: edge.id });
-                  }}
-                  onContextMenu={(e) => {
-                    e.preventDefault();
-                    setEdges(edges.filter((x) => x.id !== edge.id));
-                    if (selection?.type === 'edge' && selection.id === edge.id) setSelection(null);
-                  }}
-                >
-                  {conditionLabel(edge)}
-                </button>
-              ))}
-            </div>
-            <div className="pipeline-nodes-layer">
-              {nodes.map((node) => {
-                const snippet = (state.snippets as Snippet[]).find((s) => s.id === node.snippetId);
-                return (
-                  <div
-                    key={node.id}
-                    ref={(el) => {
-                      if (el) nodeElRefs.current.set(node.id, el);
-                      else nodeElRefs.current.delete(node.id);
-                    }}
-                    className={'pipeline-node' + (selection?.type === 'node' && selection.id === node.id ? ' selected' : '')}
-                    data-node-id={node.id}
-                    style={{ left: node.x, top: node.y }}
-                    onMouseDown={(e) => onNodeMouseDown(e, node)}
-                    onContextMenu={(e) => {
-                      e.preventDefault();
-                      setNodes(nodes.filter((n) => n.id !== node.id));
-                      setEdges(edges.filter((x) => x.from !== node.id && x.to !== node.id));
-                      if (selection?.id === node.id) setSelection(null);
-                    }}
-                  >
-                    <div className="pipeline-port pipeline-port-in" title="Drop a connection here" />
-                    <div className="pipeline-node-name">{snippet ? `${snippetIcon(snippet)} ${snippet.name}` : '⚠ (deleted snippet)'}</div>
-                    <div className="pipeline-node-tag">{snippet ? snippet.tag : ''}</div>
-                    <div className="pipeline-port pipeline-port-out" title="Drag to connect to another step" onMouseDown={(e) => onOutPortMouseDown(e, node)} />
-                  </div>
-                );
-              })}
-            </div>
-          </div>
+        <div className={'pipeline-canvas-wrap' + (nodes.length === 0 ? ' pipeline-canvas-empty-hint' : '')}>
+          <PipelineCanvas
+            nodes={nodes}
+            edges={edges}
+            selection={selection}
+            onNodesChange={setNodes}
+            onEdgesChange={setEdges}
+            onSelectionChange={setSelection}
+            fitViewSignal={fitViewSignal}
+          />
         </div>
-        <Inspector selection={selection} nodes={nodes} edges={edges} setNodes={setNodes} setEdges={setEdges} setSelection={setSelection} openPicker={(anchor, onPick) => setPicker({ anchor: anchor.getBoundingClientRect(), onPick })} />
+        <Inspector
+          selection={selection}
+          nodes={nodes}
+          edges={edges}
+          setNodes={setNodes}
+          setEdges={setEdges}
+          setSelection={setSelection}
+          openPicker={(anchor, items, emptyLabel, onPick) => setPicker({ anchor: anchor.getBoundingClientRect(), items, emptyLabel, onPick })}
+        />
       </div>
       <div className="modal-actions modal-actions-left">
         {editingPipeline && (

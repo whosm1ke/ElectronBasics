@@ -9,7 +9,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useUiStore, type Theme, type Density } from '../../store/useUiStore';
 import { useSettingsStore, closeSettings } from '../../store/useSettingsStore';
 import { playTone } from '../../lib/appearance';
-import { showToast } from '../../store/useToastStore';
+import { showToast } from '../../lib/toast';
 import { state } from '../../../modules/state';
 import { emitSnippetsChanged } from '../../lib/events';
 import { openVariables } from '../../store/useVariablesStore';

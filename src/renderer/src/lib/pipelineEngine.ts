@@ -12,7 +12,7 @@
 // live-results UI — see BatchModal.tsx. Ported from modules/pipeline-engine.js.
 import type { PipelineNode, PipelineEdge, RunResult, Snippet } from '@shared/types';
 import { extractPlaceholders, runnableTextOf } from './utils';
-import { showToast } from '../store/useToastStore';
+import { showToast } from './toast';
 import { openBatchResultsModal, resetRows, finishRun, addRow, setRowRunning, setRowDone, setRowSkipped, runOne } from '../store/useBatchStore';
 import { state } from '../../modules/state';
 

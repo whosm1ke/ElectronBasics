@@ -3,6 +3,7 @@
 // here — a scheduled command runs exactly like a manually-run one; the user
 // who enabled the schedule is trusted to know what they turned on.
 import { Notification } from 'electron';
+import { Cron } from 'croner';
 import { readSnippets, writeSnippets } from './storage/snippets';
 import { appendHistory } from './storage/history';
 import { runShellCommand } from './shell/exec';
@@ -13,37 +14,20 @@ import type { Snippet, ScheduleConfig } from '@shared/types';
 
 const SCHEDULE_CHECK_INTERVAL_MS = 30 * 1000;
 
-function cronFieldMatches(fieldExpr: string, value: number, min: number, max: number): boolean {
-  if (fieldExpr === '*') return true;
-  return fieldExpr.split(',').some((part) => {
-    if (part.includes('/')) {
-      const [range, stepStr] = part.split('/');
-      const step = Number(stepStr) || 1;
-      const [start, end] = range === '*' ? [min, max] : range.split('-').map(Number);
-      for (let v = start; v <= end; v += step) if (v === value) return true;
-      return false;
-    }
-    if (part.includes('-')) {
-      const [start, end] = part.split('-').map(Number);
-      return value >= start && value <= end;
-    }
-    return Number(part) === value;
-  });
-}
-
-/** Minimal 5-field cron matcher: minute hour day-of-month month day-of-week. */
+/**
+ * Point-in-time cron match, delegated to `croner` — handles named months/
+ * days and more expression forms than the previous hand-rolled 5-field
+ * matcher did. `paused: true` stops the constructor from actually scheduling
+ * anything (we only ever want a one-off `.match()` check); a malformed
+ * expression throws in the constructor rather than returning false, so that
+ * gets caught here to keep this function's own "never throws" contract.
+ */
 export function cronMatches(expr: string, date: Date): boolean {
-  const parts = String(expr || '').trim().split(/\s+/);
-  if (parts.length !== 5) return false;
-  const [min, hour, dom, month, dow] = parts;
   try {
-    return (
-      cronFieldMatches(min, date.getMinutes(), 0, 59) &&
-      cronFieldMatches(hour, date.getHours(), 0, 23) &&
-      cronFieldMatches(dom, date.getDate(), 1, 31) &&
-      cronFieldMatches(month, date.getMonth() + 1, 1, 12) &&
-      cronFieldMatches(dow, date.getDay(), 0, 6)
-    );
+    const job = new Cron(expr, { paused: true });
+    const matched = job.match(date);
+    job.stop();
+    return matched;
   } catch (err) {
     console.error(`Invalid cron expression "${expr}":`, err);
     return false;

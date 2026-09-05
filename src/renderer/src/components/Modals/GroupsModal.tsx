@@ -4,10 +4,10 @@
 // Still calls straight into batch-runner.js's openBatchConfig (not yet
 // ported) to actually run a group — same as the original.
 import { useState } from 'react';
+import { Play, Pencil } from 'lucide-react';
 import type { Snippet, Group } from '@shared/types';
-import { iconSvg } from '../../lib/icons';
 import { snippetIcon, newId } from '../../lib/utils';
-import { showToast } from '../../store/useToastStore';
+import { showToast } from '../../lib/toast';
 import { useSnippetsVersion, bumpSnippetsVersion } from '../../store/useSnippetsVersion';
 import { useGroupsStore, closeGroups, openGroupEditor, showGroupsListView } from '../../store/useGroupsStore';
 import { state } from '../../../modules/state';
@@ -36,8 +36,14 @@ function GroupRow({ group }: { group: Group }) {
         </div>
         {group.description && <div className="group-row-description">{group.description}</div>}
       </div>
-      <button type="button" className="btn btn-small btn-primary" onClick={() => runGroup(group)} dangerouslySetInnerHTML={{ __html: `${iconSvg('play')}<span>Run</span>` }} />
-      <button type="button" className="btn btn-small" onClick={() => openGroupEditor(group)} dangerouslySetInnerHTML={{ __html: `${iconSvg('edit')}<span>Edit</span>` }} />
+      <button type="button" className="btn btn-small btn-primary" onClick={() => runGroup(group)}>
+        <Play size={13} fill="currentColor" stroke="none" />
+        <span>Run</span>
+      </button>
+      <button type="button" className="btn btn-small" onClick={() => openGroupEditor(group)}>
+        <Pencil size={13} />
+        <span>Edit</span>
+      </button>
     </div>
   );
 }

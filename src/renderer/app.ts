@@ -12,7 +12,7 @@ import { openModal } from './src/store/useEditorStore';
 import { openGroups } from './src/store/useGroupsStore';
 import { openSettings } from './src/store/useSettingsStore';
 import { openPipelines } from './src/store/usePipelinesStore';
-import { showToast } from './src/store/useToastStore';
+import { showToast } from './src/lib/toast';
 import { emitGroupsChanged } from './src/lib/events';
 import { bootstrapRunningProcesses } from './src/lib/processEngine';
 
@@ -34,7 +34,6 @@ window.addEventListener('unhandledrejection', (e) => {
 
 // Side-effect imports: each of these attaches its own event listeners at
 // module-load time (buttons, self-registered event-bus handlers).
-import './src/lib/menus';
 import './modules/batch';
 import './src/lib/keyboard';
 

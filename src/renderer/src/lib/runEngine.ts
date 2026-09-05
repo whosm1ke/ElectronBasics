@@ -11,12 +11,13 @@
 // that same DOM-patching design kept as-is (not componentized): it renders
 // into real DOM elements Card.tsx hands it via refs, exactly as the
 // original rendered into elements cards.js handed it.
+import { diffLines } from 'diff';
 import type { Snippet, RunResult, SequenceResult, DebugInfo } from '@shared/types';
 import { iconSvg } from './icons';
 import { prettyMaybeJson, runnableTextOf, extractPlaceholders, buildCardMetaText, snippetIcon } from './utils';
 import { playTone, maybeNotify } from './appearance';
 import { persistSnippets } from './snippetsStore';
-import { showToast } from '../store/useToastStore';
+import { showToast } from './toast';
 import { useUiStore } from '../store/useUiStore';
 import { state } from '../../modules/state';
 
@@ -318,41 +319,26 @@ async function appendDiffToggle(snippet: Snippet, outputEl: HTMLElement, current
   outputEl.appendChild(diffBody);
 }
 
-/** Naive multiset line diff — good enough for "did the status output change" checks. */
+/** Real LCS-based line diff (jsdiff) — correctly handles reordered/unchanged runs, unlike a multiset count. */
 function renderLineDiff(container: HTMLElement, oldText: string, newText: string): void {
   container.innerHTML = '';
-  const oldCounts = new Map<string, number>();
-  oldText.split('\n').forEach((l) => oldCounts.set(l, (oldCounts.get(l) || 0) + 1));
-  const newCounts = new Map<string, number>();
-  newText.split('\n').forEach((l) => newCounts.set(l, (newCounts.get(l) || 0) + 1));
-
-  const removed: string[] = [];
-  oldCounts.forEach((count, line) => {
-    const stillPresent = Math.min(count, newCounts.get(line) || 0);
-    for (let i = stillPresent; i < count; i++) removed.push(line);
+  let hasDiff = false;
+  diffLines(oldText, newText).forEach((part) => {
+    if (!part.added && !part.removed) return; // unchanged run — not shown, same density as before
+    hasDiff = true;
+    // diffLines() keeps each hunk's trailing "\n" in `value`, so splitting on
+    // "\n" leaves one bogus trailing "" entry to drop (unless the hunk itself
+    // ends without a newline, e.g. the very last line of the output).
+    const lines = part.value.split('\n');
+    if (lines[lines.length - 1] === '') lines.pop();
+    lines.forEach((l) => {
+      const d = document.createElement('div');
+      d.className = part.added ? 'diff-line-added' : 'diff-line-removed';
+      d.textContent = `${part.added ? '+' : '-'} ${l}`;
+      container.appendChild(d);
+    });
   });
-  const added: string[] = [];
-  newCounts.forEach((count, line) => {
-    const wasPresent = Math.min(count, oldCounts.get(line) || 0);
-    for (let i = wasPresent; i < count; i++) added.push(line);
-  });
-
-  if (added.length === 0 && removed.length === 0) {
-    container.textContent = '(no differences)';
-    return;
-  }
-  removed.forEach((l) => {
-    const d = document.createElement('div');
-    d.className = 'diff-line-removed';
-    d.textContent = `- ${l}`;
-    container.appendChild(d);
-  });
-  added.forEach((l) => {
-    const d = document.createElement('div');
-    d.className = 'diff-line-added';
-    d.textContent = `+ ${l}`;
-    container.appendChild(d);
-  });
+  if (!hasDiff) container.textContent = '(no differences)';
 }
 
 /** Shared root-level driver for both runSingleSnippet and runSequenceSnippet below — sets up the chain context, runs the root (and whatever before/after chain it pulls in) into the root card's own output panel, then applies the root-specific extras (sound, notification, diff toggle, copy-output text) based on the root's own result. */

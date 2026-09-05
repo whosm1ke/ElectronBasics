@@ -6,7 +6,7 @@
 // modals (each renders its own full overlay — index.html no longer has
 // static markup for these three, unlike the inline-content pieces mounted
 // separately by legacyMounts.tsx).
-import { Toast } from './components/shared/Toast';
+import { Toaster } from 'sonner';
 import { HistoryDrawer } from './components/Modals/HistoryDrawer';
 import { VariablesModal } from './components/Modals/VariablesModal';
 import { DetailsModal } from './components/Modals/DetailsModal';
@@ -19,7 +19,14 @@ import { PipelinesModal } from './components/Modals/PipelinesModal';
 export function App() {
   return (
     <>
-      <Toast />
+      {/* unstyled + classNames reuses the app's existing .toast/.toast-error/.toast-action-btn look (style.css) — sonner owns stacking/positioning/dismiss, not the visual */}
+      <Toaster
+        position="bottom-center"
+        toastOptions={{
+          unstyled: true,
+          classNames: { toast: 'toast', error: 'toast-error', actionButton: 'toast-action-btn' },
+        }}
+      />
       <HistoryDrawer />
       <VariablesModal />
       <DetailsModal />

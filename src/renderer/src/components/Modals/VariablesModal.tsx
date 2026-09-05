@@ -4,8 +4,8 @@
 // header comment on why). Still reads/writes modules/state.js's
 // state.variables directly — see useVariablesStore.ts's header comment.
 import { useRef } from 'react';
+import { Eye, Trash2 } from 'lucide-react';
 import type { Variable } from '@shared/types';
-import { iconSvg } from '../../lib/icons';
 import { newId } from '../../lib/utils';
 import { useVariablesOpen, closeVariables } from '../../store/useVariablesStore';
 import { useSnippetsVersion, bumpSnippetsVersion } from '../../store/useSnippetsVersion';
@@ -48,22 +48,24 @@ function VariableRow({ variable, index }: { variable: Variable; index: number })
         type="button"
         className={'variable-secret-btn' + (variable.secret ? ' active' : '')}
         title="Hide value in the UI (stored locally, not encrypted)"
-        dangerouslySetInnerHTML={{ __html: iconSvg('eye') }}
         onClick={async () => {
           (state.variables as Variable[])[index].secret = !variable.secret;
           await persistVariables();
         }}
-      />
+      >
+        <Eye size={12} />
+      </button>
       <button
         type="button"
         className="variable-remove-btn"
         title="Remove variable"
-        dangerouslySetInnerHTML={{ __html: iconSvg('trash') }}
         onClick={async () => {
           (state.variables as Variable[]).splice(index, 1);
           await persistVariables();
         }}
-      />
+      >
+        <Trash2 size={13} />
+      </button>
     </div>
   );
 }

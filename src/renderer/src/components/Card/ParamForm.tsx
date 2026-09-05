@@ -3,7 +3,7 @@
 // modules/params.js's buildParamForm(), now real React state instead of an
 // imperatively-built DOM fragment inserted before the output panel.
 import { useEffect, useRef, useState } from 'react';
-import { iconSvg } from '../../lib/icons';
+import { Play } from 'lucide-react';
 // modules/state.js isn't typed (plain JS, see its own header comment) — see
 // useLegacyBus.ts's header comment on why components ported ahead of it
 // still reach in directly rather than duplicating its data.
@@ -85,8 +85,10 @@ export function ParamForm({ names, onRun, onCancel }: ParamFormProps) {
             e.stopPropagation();
             onRun(values);
           }}
-          dangerouslySetInnerHTML={{ __html: `${iconSvg('play')}<span>Run</span>` }}
-        />
+        >
+          <Play size={13} fill="currentColor" stroke="none" />
+          <span>Run</span>
+        </button>
       </div>
     </div>
   );

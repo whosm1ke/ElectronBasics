@@ -5,8 +5,8 @@
 // ported) for the dependency/group links — same as Card.tsx does for its
 // own not-yet-ported neighbors.
 import type { ReactNode } from 'react';
+import { Layers } from 'lucide-react';
 import type { Snippet, Group } from '@shared/types';
-import { iconSvg } from '../../lib/icons';
 import { snippetIcon, SHELL_LABELS, timeAgo } from '../../lib/utils';
 import { useDetailsStore, closeDetails, hideDetailsForNavigation } from '../../store/useDetailsStore';
 import { state } from '../../../modules/state';
@@ -47,8 +47,9 @@ function GroupLink({ group }: { group: Group }) {
         hideDetailsForNavigation(null); // no return-to-details tracking needed here
         openGroupEditor(group);
       }}
-      dangerouslySetInnerHTML={{ __html: `${iconSvg('layers')} ${group.name || '(untitled group)'}` }}
-    />
+    >
+      <Layers size={12} /> {group.name || '(untitled group)'}
+    </button>
   );
 }
 

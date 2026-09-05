@@ -271,9 +271,66 @@ body {
   font-weight: 500;
 }
 
-/* Wraps a <select> so we can draw our own theme-correct chevron and hide the
-   browser's native one — the native arrow doesn't respect our padding and
-   ends up looking slightly off-center against custom-styled selects. */
+/* ThemedSelect.tsx (@radix-ui/react-select) — the trigger is a real element
+   we lay out ourselves (flex row, icon as a normal child), so no overlay
+   trick is needed the way the native-<select> workaround below requires. */
+.select-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.select-trigger svg {
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+}
+
+.select-content {
+  /* No `animation:` here — see .context-menu's comment (further down this
+     file) on why a static one would stop Radix's Presence from ever
+     actually unmounting this on close (Escape, item-select, outside click). */
+  background: var(--bg-solid);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow);
+  min-width: var(--radix-select-trigger-width);
+  padding: 4px;
+  z-index: 300;
+}
+
+.select-viewport {
+  padding: 2px;
+}
+
+.select-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 9px;
+  border-radius: 6px;
+  font-size: 12.5px;
+  color: var(--text-primary);
+  cursor: pointer;
+  outline: none;
+}
+
+.select-item[data-highlighted] {
+  background: var(--surface-hover);
+}
+
+.select-item-indicator {
+  display: inline-flex;
+  color: var(--accent);
+}
+
+/* Wraps a native <select> so we can draw our own theme-correct chevron and
+   hide the browser's own one — the native arrow doesn't respect our padding
+   and ends up looking slightly off-center against custom-styled selects.
+   Only the header's plain (non-React) sort-mode select still uses this —
+   every componentized <select> now uses ThemedSelect above instead. */
 .select-wrap {
   position: relative;
   display: inline-flex;
@@ -391,12 +448,34 @@ body {
   opacity: 0.5;
 }
 
-.card.drag-over-top {
-  box-shadow: inset 0 2px 0 var(--accent);
+/* Insertion-point indicator, driven by dnd-kit's active/over state (see
+   SnippetList.tsx) rather than native drag events — a crisp accent-colored
+   line plus a soft glow, so it reads clearly against both themes without
+   relying on the (already-present) reflow animation alone. */
+.card.drag-over-top,
+.card.drag-over-bottom {
+  position: relative;
+  z-index: 1;
 }
 
-.card.drag-over-bottom {
-  box-shadow: inset 0 -2px 0 var(--accent);
+.card.drag-over-top::before,
+.card.drag-over-bottom::after {
+  content: '';
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--accent);
+  box-shadow: 0 0 6px 1px var(--accent-soft);
+}
+
+.card.drag-over-top::before {
+  top: -5px;
+}
+
+.card.drag-over-bottom::after {
+  bottom: -5px;
 }
 
 .drag-handle {
@@ -1075,63 +1154,61 @@ kbd {
 .pipeline-canvas-wrap {
   flex: 1;
   min-width: 0;
-  overflow: auto;
+  position: relative;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  background:
-    linear-gradient(var(--surface) 1px, transparent 1px),
-    linear-gradient(90deg, var(--surface) 1px, transparent 1px);
-  background-size: 24px 24px;
-  background-color: var(--bg-solid);
+  overflow: hidden; /* React Flow owns pan/zoom internally — this just clips it to the rounded corners */
 }
 
-.pipeline-canvas {
-  position: relative;
-  width: 2200px;
-  height: 900px;
-}
-
-.pipeline-canvas.pipeline-canvas-empty-hint::before {
-  content: 'Click "+ Add step" to place your first step';
-  position: absolute;
-  left: 24px;
-  top: 20px;
-  font-size: 12.5px;
-  color: var(--text-tertiary);
-}
-
-.pipeline-edges-svg,
-.pipeline-edge-labels,
-.pipeline-nodes-layer {
-  position: absolute;
-  inset: 0;
+/* React Flow's own root element — needs an explicit size, since .pipeline-canvas-wrap only constrains it via flex, not a fixed box. */
+.pipeline-canvas-wrap .react-flow {
   width: 100%;
   height: 100%;
+  background: var(--bg-solid);
 }
 
-.pipeline-edges-svg {
+.pipeline-canvas-wrap.pipeline-canvas-empty-hint::after {
+  content: 'Click "+ Add step" to place your first step';
+  position: absolute;
+  left: 20px;
+  top: 16px;
+  font-size: 12.5px;
+  color: var(--text-tertiary);
   pointer-events: none;
+  z-index: 5;
 }
-.pipeline-edges-svg line {
+
+.pipeline-flow-controls {
+  box-shadow: var(--shadow);
+}
+.pipeline-flow-controls button {
+  background: var(--bg-solid);
+  border-bottom-color: var(--border);
+  fill: var(--text-secondary);
+}
+.pipeline-flow-controls button:hover {
+  background: var(--surface-hover);
+}
+
+.pipeline-flow-minimap {
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow);
+  background: var(--bg-solid) !important;
+}
+
+/* ---------- Pipeline edges ---------- */
+
+.pipeline-edge-path {
   stroke: var(--border-strong);
   stroke-width: 2;
 }
-.pipeline-edges-svg line.pipeline-edge-selected {
+.pipeline-edge-path.selected {
   stroke: var(--accent);
   stroke-width: 2.5;
-}
-.pipeline-edges-svg line.pipeline-edge-dragging {
-  stroke: var(--accent);
-  stroke-dasharray: 4 3;
-}
-
-.pipeline-edge-labels {
-  pointer-events: none;
 }
 
 .pipeline-edge-label {
   position: absolute;
-  transform: translate(-50%, -50%);
   pointer-events: auto;
   font-size: 10px;
   font-weight: 700;
@@ -1168,56 +1245,91 @@ kbd {
   box-shadow: 0 0 0 2px var(--accent-soft);
 }
 
-.pipeline-node {
-  position: absolute;
-  width: 160px;
+/* ---------- Pipeline step node ---------- */
+
+.pipeline-step-node {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  /* Fixed box-sizing: border-box width/height, matching pipelineFlow.ts's
+     NODE_WIDTH/NODE_HEIGHT exactly — those are declared on each React Flow
+     node object specifically so React Flow trusts them instead of
+     re-measuring the real DOM element (see toFlowNode()'s own comment).
+     If this ever drifts from NODE_WIDTH/NODE_HEIGHT, edges will visually
+     connect slightly off from the actual port dot. */
+  box-sizing: border-box;
+  width: 200px;
+  height: 76px;
   background: var(--surface);
   border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  padding: 8px 10px;
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
   cursor: grab;
-  user-select: none;
   box-shadow: var(--shadow);
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
 }
-.pipeline-node:active {
+.pipeline-step-node:active {
   cursor: grabbing;
 }
-.pipeline-node.selected {
+.pipeline-step-node.selected {
   border-color: var(--accent);
   box-shadow: 0 0 0 2px var(--accent-soft);
 }
-.pipeline-node-name {
-  font-size: 12px;
+.pipeline-step-node.broken {
+  border-color: rgba(255, 107, 107, 0.5);
+}
+
+.pipeline-step-node-avatar {
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+}
+
+.pipeline-step-node-body {
+  min-width: 0;
+  flex: 1;
+}
+
+.pipeline-step-node-name {
+  font-size: 12.5px;
   font-weight: 600;
   color: var(--text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.pipeline-node-tag {
-  font-size: 10px;
+
+.pipeline-step-node-meta {
+  font-size: 10.5px;
   color: var(--text-tertiary);
   margin-top: 1px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.pipeline-port {
-  position: absolute;
-  top: 50%;
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  background: var(--accent);
-  border: 2px solid var(--bg-solid);
-  transform: translateY(-50%);
-  cursor: crosshair;
+
+.pipeline-handle {
+  width: 12px !important;
+  height: 12px !important;
+  background: var(--accent) !important;
+  border: 2px solid var(--bg-solid) !important;
 }
-.pipeline-port-in {
-  left: -7px;
-}
-.pipeline-port-out {
-  right: -7px;
-}
-.pipeline-node.pipeline-node-connect-target .pipeline-port-in {
+.pipeline-handle:hover,
+.pipeline-handle.connectingfrom,
+.pipeline-handle.connectingto {
   box-shadow: 0 0 0 4px var(--accent-soft);
+}
+/* React Flow's own green/red validity glow on a would-be connection target — reuses the app's existing success/danger tokens instead of the library default blue/red. */
+.pipeline-handle.valid {
+  background: var(--success) !important;
+}
+.pipeline-handle.connectingto:not(.valid) {
+  background: var(--danger) !important;
 }
 
 /* ---------- Pipeline inspector (side panel) ---------- */
@@ -1650,12 +1762,11 @@ select.field-input {
 }
 
 /* ---------- Toast ---------- */
+/* Rendered by sonner's <Toaster/> (App.tsx), `unstyled: true` — sonner owns
+   position/stacking/enter-exit animation on the toast root itself, these
+   classNames only supply the pill look on top of that. */
 
 .toast {
-  position: fixed;
-  left: 50%;
-  bottom: 60px;
-  transform: translateX(-50%);
   background: var(--surface-active);
   border: 1px solid var(--border-strong);
   color: var(--text-primary);
@@ -1664,18 +1775,11 @@ select.field-input {
   padding: 9px 16px;
   border-radius: 999px;
   box-shadow: var(--shadow);
-  z-index: 200;
-  animation: toast-in 0.2s cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
 
 .toast.toast-error {
   border-color: rgba(255, 107, 107, 0.4);
   color: var(--danger-hover);
-}
-
-@keyframes toast-in {
-  from { opacity: 0; transform: translate(-50%, 6px); }
-  to { opacity: 1; transform: translate(-50%, 0); }
 }
 
 .toast-action-btn {
@@ -1701,6 +1805,11 @@ select.field-input {
   border-bottom: 1px solid var(--border);
   overflow-x: auto;
   flex-shrink: 0;
+  scrollbar-width: none;
+}
+
+.favorites-bar::-webkit-scrollbar {
+  display: none;
 }
 
 .favorite-item {
@@ -1767,12 +1876,31 @@ select.field-input {
   opacity: 0.5;
 }
 
-.batch-order-row.drag-over-top {
-  box-shadow: inset 0 2px 0 var(--accent);
+/* Same insertion-point treatment as .card.drag-over-top/bottom above. */
+.batch-order-row.drag-over-top,
+.batch-order-row.drag-over-bottom {
+  position: relative;
+  z-index: 1;
 }
 
-.batch-order-row.drag-over-bottom {
-  box-shadow: inset 0 -2px 0 var(--accent);
+.batch-order-row.drag-over-top::before,
+.batch-order-row.drag-over-bottom::after {
+  content: '';
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--accent);
+  box-shadow: 0 0 6px 1px var(--accent-soft);
+}
+
+.batch-order-row.drag-over-top::before {
+  top: -4px;
+}
+
+.batch-order-row.drag-over-bottom::after {
+  bottom: -4px;
 }
 
 .batch-order-num {
@@ -1835,6 +1963,11 @@ select.field-input {
   word-break: break-word;
   max-height: 140px;
   overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.batch-result-body::-webkit-scrollbar {
+  display: none;
 }
 
 /* ---------- Segmented control (theme / density / schedule / batch mode) ---------- */
@@ -2290,9 +2423,14 @@ select.field-input {
 }
 
 .copy-dropdown {
-  /* Positioned via JS (top/left in px) once appended to <body> — fixed, not
-     absolute-inside-.copy-split, so it always paints above every card
-     regardless of DOM order instead of getting covered by a later sibling. */
+  /* Rendered via a Portal (CopyAsDropdown.tsx, @radix-ui/react-dropdown-menu)
+     and positioned by Radix's own Popper logic — `position: fixed` here is
+     still required (Radix moves the element via inline transform/top/left,
+     it doesn't set the CSS `position` property itself), and keeps this
+     painting above every card regardless of DOM order. No `animation:`
+     here either — see .context-menu's comment below on why a static one
+     would stop Escape/outside-click from ever actually removing this from
+     the DOM. */
   position: fixed;
   z-index: 300;
   background: var(--bg-solid);
@@ -2318,13 +2456,31 @@ select.field-input {
   cursor: pointer;
 }
 
-.copy-dropdown-item:hover {
+.copy-dropdown-item:hover,
+.copy-dropdown-item[data-highlighted] {
+  /* [data-highlighted] is Radix's own hover-or-keyboard-focused state — a
+     real DOM :hover never fires for arrow-key navigation, so this is what
+     gives keyboard users the same visual feedback pointer users get. */
   background: var(--surface-hover);
+  outline: none;
 }
 
 /* ---------- Right-click context menu ---------- */
 
 .context-menu {
+  /* Rendered via a Portal (CardContextMenu.tsx, @radix-ui/react-context-menu)
+     — see .copy-dropdown's comment above on why `position: fixed` stays
+     even though Radix now owns the actual positioning math.
+     Deliberately NO `animation:` here (unlike most other overlays in this
+     file, e.g. .modal/.copy-dropdown's mount fade): Radix's Presence
+     detects a static `animation-name` on this element and waits for a
+     matching `animationend` before actually unmounting on close. A one-shot
+     entrance keyframe (`both` fill-mode) never fires that event again once
+     finished, so Escape/outside-click would decide to close (onOpenChange
+     fires) while the element itself gets stuck in the DOM forever. Only
+     add an exit animation here if it's driven off Radix's own
+     `[data-state="closed"]` attribute (a real close-triggered keyframe),
+     never a plain always-on `animation` property. */
   position: fixed;
   z-index: 300;
   background: var(--bg-solid);
@@ -2333,7 +2489,6 @@ select.field-input {
   box-shadow: var(--shadow);
   padding: 6px;
   min-width: 175px;
-  animation: modal-in 0.12s ease both;
 }
 
 .context-menu-item {
@@ -2352,15 +2507,18 @@ select.field-input {
   cursor: pointer;
 }
 
-.context-menu-item:hover {
+.context-menu-item:hover,
+.context-menu-item[data-highlighted] {
   background: var(--surface-hover);
+  outline: none;
 }
 
 .context-menu-item.danger {
   color: var(--danger);
 }
 
-.context-menu-item.danger:hover {
+.context-menu-item.danger:hover,
+.context-menu-item.danger[data-highlighted] {
   background: var(--danger-soft);
   color: var(--danger-hover);
 }
@@ -2374,6 +2532,11 @@ select.field-input {
 .pipeline-add-step-menu {
   max-height: 260px;
   overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.pipeline-add-step-menu::-webkit-scrollbar {
+  display: none;
 }
 
 /* ---------- Folder-open / terminal buttons ---------- */
@@ -2516,6 +2679,11 @@ select.field-input {
   padding: 6px 9px;
   max-height: 140px;
   overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.diff-body::-webkit-scrollbar {
+  display: none;
 }
 
 .diff-line-added {

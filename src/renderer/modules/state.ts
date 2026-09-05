@@ -17,7 +17,6 @@ export const state = {
   selectedIndex: -1,
   activeTag: null as string | null,
   editingId: null as string | null, // null = "add" mode in the editor, otherwise the id being edited
-  dragSrcId: null as string | null, // manual-reorder drag-and-drop source id
 
   sortMode: localStorage.getItem('snippetRunner.sortMode') || 'manual',
   groupView: localStorage.getItem('snippetRunner.groupView') === '1',
@@ -28,7 +27,6 @@ export const state = {
   batchOrder: [] as Snippet[],
   batchModeValue: 'sequential',
   batchStopOnError: false,
-  batchDragSrcId: null as string | null,
 
   // Snippet-editor transient UI state (schedule type tab)
   scheduleTypeValue: 'interval',

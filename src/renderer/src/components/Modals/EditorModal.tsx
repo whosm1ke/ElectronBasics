@@ -8,10 +8,11 @@
 // the React-idiomatic replacement for the original's "populate every dom.*
 // field on open" imperative reset.
 import { useEffect, useState } from 'react';
+import { Trash2 } from 'lucide-react';
 import type { ShellType, ScheduleType, Snippet, EnvVar } from '@shared/types';
-import { iconSvg } from '../../lib/icons';
 import { newId, findDependencyCycle } from '../../lib/utils';
-import { showToast } from '../../store/useToastStore';
+import { showToast } from '../../lib/toast';
+import { ThemedSelect } from '../shared/ThemedSelect';
 import { useEditorStore, closeModal } from '../../store/useEditorStore';
 import { state, ICON_PRESETS } from '../../../modules/state';
 import { persistSnippets } from '../../lib/snippetsStore';
@@ -303,9 +304,10 @@ export function EditorModal() {
                     type="button"
                     className="step-remove-btn"
                     title="Remove step"
-                    dangerouslySetInnerHTML={{ __html: iconSvg('trash') }}
                     onClick={() => set('steps', form.steps.filter((_, idx) => idx !== i))}
-                  />
+                  >
+                    <Trash2 size={13} />
+                  </button>
                 </div>
               ))}
             </div>
@@ -330,26 +332,12 @@ export function EditorModal() {
           </div>
           <div className="field-col field-col-narrow">
             <label className="field-label" htmlFor="newShell">Shell</label>
-            <div className="select-wrap">
-              <select
-                id="newShell"
-                className="field-input"
-                value={form.shell}
-                onChange={(e) => {
-                  const shell = e.target.value as ShellType;
-                  setForm((f) => ({ ...f, shell, elevated: shell === 'powershell' ? f.elevated : false }));
-                }}
-              >
-                {SHELL_OPTIONS.map((o) => (
-                  <option value={o.value} key={o.value}>
-                    {o.label}
-                  </option>
-                ))}
-              </select>
-              <svg className="select-chevron" viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="2.5">
-                <polyline points="6 9 12 15 18 9" />
-              </svg>
-            </div>
+            <ThemedSelect
+              id="newShell"
+              value={form.shell}
+              options={SHELL_OPTIONS}
+              onChange={(shell) => setForm((f) => ({ ...f, shell, elevated: shell === 'powershell' ? f.elevated : false }))}
+            />
           </div>
         </div>
 
@@ -425,7 +413,9 @@ export function EditorModal() {
                   set('env', env);
                 }}
               />
-              <button type="button" className="step-remove-btn" title="Remove" dangerouslySetInnerHTML={{ __html: iconSvg('trash') }} onClick={() => set('env', form.env.filter((_, idx) => idx !== i))} />
+              <button type="button" className="step-remove-btn" title="Remove" onClick={() => set('env', form.env.filter((_, idx) => idx !== i))}>
+                <Trash2 size={13} />
+              </button>
             </div>
           ))}
         </div>

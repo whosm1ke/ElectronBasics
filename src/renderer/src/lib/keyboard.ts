@@ -19,7 +19,7 @@ import { closeVariables, isVariablesOpen } from '../store/useVariablesStore';
 import { closeGroups, isGroupsOpen } from '../store/useGroupsStore';
 import { closePipelines, isPipelinesOpen } from '../store/usePipelinesStore';
 import { isBatchModalOpen, closeBatchModal } from '../store/useBatchStore';
-import { removeContextMenu, isContextMenuOpen, removeCopyDropdown, isCopyDropdownOpen } from './menus';
+import { isAnyContextMenuOpen, isAnyCopyDropdownOpen } from './menuState';
 import { duplicateSnippet, togglePin } from './snippetsStore';
 
 function moveSelection(delta: number): void {
@@ -49,8 +49,11 @@ document.addEventListener('keydown', (e) => {
     else if (isPipelinesOpen()) closePipelines();
     else if (isHistoryOpen()) closeHistory();
     else if (isSettingsOpen()) closeSettings();
-    else if (isContextMenuOpen()) removeContextMenu();
-    else if (isCopyDropdownOpen()) removeCopyDropdown();
+    // Radix's own DismissableLayer already closes an open context menu/
+    // dropdown on Escape (its listener is registered after this one, so this
+    // check still sees "open" at the moment it runs) — just skip the
+    // hide-window fallback for this Escape press, nothing to close here.
+    else if (isAnyContextMenuOpen() || isAnyCopyDropdownOpen()) { /* no-op */ }
     else window.electronAPI.hideWindow();
     return;
   }
