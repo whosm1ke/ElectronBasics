@@ -11,4 +11,3 @@ export const APP_SETTINGS_FILE = path.join(USER_DATA, 'app-settings.json');
 export const VARIABLES_FILE = path.join(USER_DATA, 'variables.json');
 export const GROUPS_FILE = path.join(USER_DATA, 'groups.json');
 export const PIPELINES_FILE = path.join(USER_DATA, 'pipelines.json');
-export const BACKUPS_DIR = path.join(USER_DATA, 'backups');

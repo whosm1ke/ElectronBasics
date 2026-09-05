@@ -170,3 +170,6 @@ lde/config/sensitive.local.config.json
 # session-local Playwright verification driver (not project tooling)
 .e2e-driver.mjs
 .e2e-cmds*.json
+
+# personal working notes, not meant to be committed
+REFACTOR-NOTES.md

@@ -11,11 +11,6 @@ export interface SetHotkeyResult {
   error?: string;
 }
 
-export interface BackupInfo {
-  fileName: string; // "snippets-<ISO timestamp with : and . replaced by ->.json"
-  mtime: number; // ms epoch
-}
-
 export interface ExportResult {
   ok: boolean;
   filePath?: string;
@@ -39,12 +34,6 @@ export interface ImportSuccessResult {
 }
 
 export type ImportSnippetsResult = ImportFailureResult | ImportSuccessResult;
-
-export interface RestoreBackupResult {
-  ok: boolean;
-  snippets?: import('./snippet').Snippet[];
-  error?: string;
-}
 
 // update-status event payload — which extra fields are present depends on
 // `status` (version on 'available'/'downloaded', percent on 'downloading',

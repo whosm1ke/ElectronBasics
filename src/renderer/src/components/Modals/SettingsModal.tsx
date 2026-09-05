@@ -3,10 +3,9 @@
 // useUiStore.ts (a real Zustand store — see that file's header comment on
 // why this was deferred to here rather than done alongside appearance.ts
 // in Phase 6: Settings is this data's one and only writer). Hotkey capture
-// and backups list are local component state, refreshed each time the
-// modal opens, same as the original's openSettings().
+// is local component state, refreshed each time the modal opens, same as
+// the original's openSettings().
 import { useEffect, useRef, useState } from 'react';
-import type { BackupInfo } from '@shared/types';
 import { useUiStore, type Theme, type Density } from '../../store/useUiStore';
 import { useSettingsStore, closeSettings } from '../../store/useSettingsStore';
 import { playTone } from '../../lib/appearance';
@@ -279,28 +278,10 @@ function UpdatesSection() {
 
 function DataSection() {
   const [launchOnStartup, setLaunchOnStartup] = useState(false);
-  const [backups, setBackups] = useState<BackupInfo[]>([]);
-
-  async function loadBackups() {
-    setBackups(await window.electronAPI.listBackups());
-  }
 
   useEffect(() => {
     window.electronAPI.getLaunchOnStartup().then(setLaunchOnStartup);
-    loadBackups();
   }, []);
-
-  async function restore(fileName: string) {
-    const res = await window.electronAPI.restoreBackup(fileName);
-    if (res.ok && res.snippets) {
-      state.snippets = res.snippets;
-      emitSnippetsChanged();
-      showToast('Snippet library restored from backup');
-      loadBackups();
-    } else {
-      showToast(res.error || 'Restore failed', 'error');
-    }
-  }
 
   return (
     <div className="settings-section">
@@ -353,24 +334,6 @@ function DataSection() {
         >
           Import snippets…
         </button>
-      </div>
-
-      <label className="field-label">
-        Automatic backups <span className="field-hint">(snapshotted before each change, throttled)</span>
-      </label>
-      <div className="backups-list no-scrollbar">
-        {backups.length === 0 ? (
-          <div className="backups-empty">No backups yet — one is captured automatically before your next change.</div>
-        ) : (
-          backups.map((b) => (
-            <div className="backup-row" key={b.fileName}>
-              <span className="backup-row-time">{new Date(b.mtime).toLocaleString()}</span>
-              <button type="button" className="btn btn-small" onClick={() => restore(b.fileName)}>
-                Restore
-              </button>
-            </div>
-          ))
-        )}
       </div>
     </div>
   );

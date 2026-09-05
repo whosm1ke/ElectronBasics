@@ -5,7 +5,7 @@
 // should be written `satisfies ElectronAPI` so drift between the two is a
 // type error, not a silent runtime mismatch.
 //
-// 31 invoke-based (Promise-returning) methods, 2 fire-and-forget `send`
+// 29 invoke-based (Promise-returning) methods, 2 fire-and-forget `send`
 // methods (hideWindow/showWindow), and 5 subscribe-style event listeners
 // (onOpenHistoryRequest, onWindowShown, onUpdateStatus, onProcessOutput,
 // onProcessStatus) — each returns an unsubscribe function.
@@ -26,10 +26,8 @@ import type { StartProcessPayload, ProcessSnapshot, ProcessOutputEvent, ProcessS
 import type {
   HotkeyInfo,
   SetHotkeyResult,
-  BackupInfo,
   ExportResult,
   ImportSnippetsResult,
-  RestoreBackupResult,
   UpdateStatusEvent,
 } from './misc';
 
@@ -67,9 +65,6 @@ export interface ElectronAPI {
   savePipelines(pipelines: Pipeline[]): Promise<Pipeline[]>;
 
   openPath(targetPath: string): Promise<OkResult>;
-
-  listBackups(): Promise<BackupInfo[]>;
-  restoreBackup(fileName: string): Promise<RestoreBackupResult>;
 
   hideWindow(): void;
   showWindow(): void;

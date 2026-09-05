@@ -18,7 +18,6 @@ import * as appSettingsStore from './storage/app-settings';
 import * as variablesStore from './storage/variables';
 import * as groupsStore from './storage/groups';
 import * as pipelinesStore from './storage/pipelines';
-import * as backupsStore from './storage/backups';
 import * as updater from './updater';
 
 import type {
@@ -248,18 +247,6 @@ export function registerIpcHandlers(): void {
     try {
       const result = await shell.openPath(targetPath);
       return result ? { ok: false, error: result } : { ok: true };
-    } catch (err) {
-      return { ok: false, error: String((err as Error).message || err) };
-    }
-  });
-
-  ipcMain.handle('list-backups', async () => {
-    return backupsStore.listBackups();
-  });
-
-  ipcMain.handle('restore-backup', async (_event: IpcMainInvokeEvent, fileName: string) => {
-    try {
-      return { ok: true, snippets: backupsStore.restoreBackup(fileName, snippetsStore.writeSnippets) };
     } catch (err) {
       return { ok: false, error: String((err as Error).message || err) };
     }

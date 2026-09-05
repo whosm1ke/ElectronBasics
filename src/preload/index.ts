@@ -73,12 +73,6 @@ const electronAPI = {
   /** Opens a filesystem path in the OS file explorer. */
   openPath: (targetPath) => ipcRenderer.invoke('open-path', targetPath),
 
-  /** Lists automatic snippet-library backups (newest first). */
-  listBackups: () => ipcRenderer.invoke('list-backups'),
-
-  /** Restores snippets.json from a named backup file. */
-  restoreBackup: (fileName) => ipcRenderer.invoke('restore-backup', fileName),
-
   /** Hides the launcher window (does not quit the app). */
   hideWindow: () => ipcRenderer.send('hide-window'),
 

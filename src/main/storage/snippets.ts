@@ -6,7 +6,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { SNIPPETS_FILE } from '../paths';
 import { newId } from '../id';
-import { backupSnippetsIfDue } from './backups';
 import { readJsonFileSafe } from '../json-file';
 import type { Snippet, ShellType, EnvVar, ExpectConfig, ScheduleConfig } from '@shared/types';
 import { VALID_SHELLS } from '@shared/types';
@@ -246,7 +245,6 @@ export function writeSnippets(snippets: unknown): Snippet[] {
     throw new Error('Snippets payload must be an array.');
   }
   const sanitized = snippets.map(sanitizeSnippet);
-  backupSnippetsIfDue(); // snapshot the pre-change state (throttled, see storage/backups.ts)
   fs.mkdirSync(path.dirname(SNIPPETS_FILE), { recursive: true });
   fs.writeFileSync(SNIPPETS_FILE, JSON.stringify(sanitized, null, 2), 'utf8');
   return sanitized;
