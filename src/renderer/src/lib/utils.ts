@@ -93,6 +93,27 @@ export function timeAgo(iso: string | null | undefined): string {
   return `${differenceInYears(now, date)}y ago`;
 }
 
+// timeAgo's mirror image, for a moment in the future rather than the past —
+// used by the Schedule overview screen ("next run: in 4h"). Same tiering,
+// same date-fns-for-month/year-accuracy reasoning as timeAgo above.
+export function timeUntil(date: Date): string {
+  const now = Date.now();
+  const sec = Math.max(0, differenceInSeconds(date, now));
+  if (sec < 5) return 'any moment now';
+  if (sec < 60) return `in ${sec}s`;
+  const min = differenceInMinutes(date, now);
+  if (min < 60) return `in ${min}m`;
+  const hr = differenceInHours(date, now);
+  if (hr < 24) return `in ${hr}h`;
+  const day = differenceInDays(date, now);
+  if (day < 7) return `in ${day}d`;
+  const week = differenceInWeeks(date, now);
+  if (week < 5) return `in ${week}w`;
+  const month = differenceInMonths(date, now);
+  if (month < 12) return `in ${month}mo`;
+  return `in ${differenceInYears(date, now)}y`;
+}
+
 const HTML_ESCAPES: Record<string, string> = {
   '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
 };

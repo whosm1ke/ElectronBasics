@@ -133,6 +133,11 @@ const SnippetOutputSchema = z.object({
   // long-running process is single-command only (see process-manager.ts).
   background: z.boolean(),
   autoRestart: z.boolean(), // only meaningful when background is true
+  // Non-null only for a snippet pulled in via a subscribed external library
+  // (storage/libraries.ts) — holds that library's URL, so Card.tsx/etc. can
+  // badge it and a re-sync can find its own previously-imported snippets
+  // again (see libraries.ts's syncLibrary for the id-matching scheme).
+  externalSource: z.string().nullable(),
 });
 export type Snippet = z.infer<typeof SnippetOutputSchema>;
 
@@ -170,6 +175,7 @@ export const SnippetSchema = z
       // matters when `background` is also true.
       background: Boolean(s.background) && !(steps && steps.length > 0),
       autoRestart: Boolean(s.autoRestart),
+      externalSource: s.externalSource ? String(s.externalSource).slice(0, 1000) : null,
     };
   })
   .pipe(SnippetOutputSchema);

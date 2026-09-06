@@ -13,6 +13,8 @@ import type { Snippet } from './snippet';
 import type { Variable } from './variable';
 import type { Group } from './group';
 import type { Pipeline } from './pipeline';
+import type { Library } from './library';
+import type { HistorySource } from './misc';
 import type { HistoryEntry } from './history';
 import type {
   RunCommandPayload,
@@ -23,12 +25,15 @@ import type {
   OkResult,
 } from './run';
 import type { StartProcessPayload, ProcessSnapshot, ProcessOutputEvent, ProcessStatusEvent } from './process';
+import type { TriggerConfig } from './app-settings';
 import type {
   HotkeyInfo,
   SetHotkeyResult,
   ExportResult,
   ImportSnippetsResult,
   UpdateStatusEvent,
+  LibrarySyncResult,
+  RemoveLibraryResult,
 } from './misc';
 
 // A subscribe-style method's return value: call it to unsubscribe.
@@ -64,7 +69,19 @@ export interface ElectronAPI {
   getPipelines(): Promise<Pipeline[]>;
   savePipelines(pipelines: Pipeline[]): Promise<Pipeline[]>;
 
+  getLibraries(): Promise<Library[]>;
+  addLibrary(url: string): Promise<LibrarySyncResult>;
+  syncLibrary(libraryId: string): Promise<LibrarySyncResult>;
+  removeLibrary(libraryId: string): Promise<RemoveLibraryResult>;
+
+  getShellHistory(): Promise<HistorySource[]>;
+
   openPath(targetPath: string): Promise<OkResult>;
+  pathExists(targetPath: string): Promise<boolean>;
+
+  getTriggerConfig(): Promise<TriggerConfig & { running: boolean }>;
+  setTriggerConfig(patch: { enabled?: boolean; port?: number }): Promise<TriggerConfig & { running: boolean }>;
+  regenerateTriggerToken(): Promise<TriggerConfig & { running: boolean }>;
 
   hideWindow(): void;
   showWindow(): void;

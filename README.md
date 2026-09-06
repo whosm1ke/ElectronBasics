@@ -1,10 +1,10 @@
 # Snippet Runner
 
-A local, Windows-only shell snippet launcher in the style of Raycast/Spotlight. Press a global hotkey from anywhere, search your library of one-liners and multi-step scripts, and run them — across **PowerShell, CMD, Git Bash, WSL, Node.js, or Python** — with parameterized inputs, reusable variables, environment variables, working directories, elevation, scheduling, and batch runs with live per-snippet output. Fully themeable, with drag-to-reorder, a favorites bar, automatic backups, and more.
+A local, Windows-only shell snippet launcher in the style of Raycast/Spotlight. Press a global hotkey from anywhere, search your library of one-liners and multi-step scripts, and run them — across **PowerShell, CMD, Git Bash, WSL, Node.js, or Python** — with parameterized inputs, reusable variables, saved groups, visual branching pipelines, background/long-running processes, scheduling, batch runs with live per-snippet output, run-after chaining, assertions, and a Health panel that flags problems before they bite you.
 
-There is no destructive-command guard of any kind — Snippet Runner runs exactly what you tell it to, exactly when you tell it to (including on a schedule or in a batch). That's a deliberate choice: you own your commands and their consequences. See [Security model](#security-model).
+There is no destructive-command guard of any kind — Snippet Runner runs exactly what you tell it to, exactly when you tell it to (including on a schedule, in a batch, or via an external trigger). That's a deliberate choice: you own your commands and their consequences. See [Security model](#security-model).
 
-Everything runs locally. Nothing is sent anywhere except the commands *you* choose to run, on *your* machine.
+Everything runs locally. The only network calls Snippet Runner ever makes on its own are the commands *you* choose to run, an update check against this repo's GitHub Releases, and — only if you set one up yourself — a subscribed snippet library URL or an external HTTP trigger request. Nothing else leaves your machine.
 
 ---
 
@@ -18,24 +18,32 @@ Everything runs locally. Nothing is sent anywhere except the commands *you* choo
 - [Creating and editing snippets](#creating-and-editing-snippets)
 - [Multiple shells: PowerShell, CMD, Git Bash, WSL, Node.js, Python](#multiple-shells-powershell-cmd-git-bash-wsl-nodejs-python)
 - [Parameterized snippets](#parameterized-snippets)
-- [Global variables](#global-variables)
+- [Global variables (with encrypted secrets)](#global-variables-with-encrypted-secrets)
 - [Multi-step sequences](#multi-step-sequences)
 - [Working directory, environment variables, stdin & Run as Administrator](#working-directory-environment-variables-stdin--run-as-administrator)
+- [Background & long-running processes](#background--long-running-processes)
 - [Assertions ("expect")](#assertions-expect)
 - [Run after — chaining snippets together](#run-after--chaining-snippets-together)
 - [Scheduling: interval, daily, or cron](#scheduling-interval-daily-or-cron)
+- [Schedule overview](#schedule-overview)
 - [Batch run: select multiple, order them, run sequentially or in parallel](#batch-run-select-multiple-order-them-run-sequentially-or-in-parallel)
+- [Groups — saved sets of snippets](#groups--saved-sets-of-snippets)
+- [Pipelines — branching visual graphs](#pipelines--branching-visual-graphs)
 - [Open in a real terminal](#open-in-a-real-terminal)
 - [Categories, sorting & grouping](#categories-sorting--grouping)
 - [Favorites bar](#favorites-bar)
 - [Drag-and-drop reordering](#drag-and-drop-reordering)
 - ["Copy as" and the right-click menu](#copy-as-and-the-right-click-menu)
-- [Run history & diff-vs-previous-run](#run-history--diff-vs-previous-run)
+- [Run history, output & search](#run-history-output--search)
 - [Undoing a delete](#undoing-a-delete)
+- [Health — catching problems before you hit them](#health--catching-problems-before-you-hit-them)
+- [Import from terminal history](#import-from-terminal-history)
+- [External triggers — running a snippet from outside the launcher](#external-triggers--running-a-snippet-from-outside-the-launcher)
+- [Shared/external snippet libraries](#sharedexternal-snippet-libraries)
 - [Appearance: theme, accent color, density, blur, UI scale](#appearance-theme-accent-color-density-blur-ui-scale)
 - [Sound, desktop notifications & Developer mode](#sound-desktop-notifications--developer-mode)
 - [Custom global hotkey](#custom-global-hotkey)
-- [Settings: startup, backups, export & import](#settings-startup-backups-export--import)
+- [Settings: startup, updates, export & import](#settings-startup-updates-export--import)
 - [The default snippet library](#the-default-snippet-library)
 - [Where your data lives](#where-your-data-lives)
 - [Security model](#security-model)
@@ -46,15 +54,16 @@ Everything runs locally. Nothing is sent anywhere except the commands *you* choo
 
 ## What it is
 
-Snippet Runner is a small Electron app: a frameless, always-on-top, blurred card that pops up over whatever you're doing, lets you fuzzy-search a library of shell snippets, and runs the one you pick — right there, with the output shown inline. It's meant to replace the "open a terminal, retype the same `Get-Process | Sort-Object CPU -Descending | Select -First 5` you've typed a hundred times" workflow — and to grow with you into a small local automation tool: schedule a health check, chain a build into a deploy, batch-run a dozen diagnostics in one go, or drop into a real terminal when a one-shot run isn't enough.
+Snippet Runner is a small Electron app (TypeScript + React, Zustand for state): a frameless, always-on-top, blurred card that pops up over whatever you're doing, lets you fuzzy-search a library of shell snippets, and runs the one you pick — right there, with the output shown inline. It's meant to replace the "open a terminal, retype the same `Get-Process | Sort-Object CPU -Descending | Select -First 5` you've typed a hundred times" workflow — and to grow with you into a small local automation tool: schedule a health check, chain a build into a deploy, wire a handful of snippets into a branching pipeline, start a dev server and leave it running in the background, batch-run a dozen diagnostics in one go, or trigger a snippet from a script outside the launcher entirely.
 
-It ships with 42 ready-made snippets (git, npm, docker, network, system, files, utility), a full editor for your own, and a Settings panel to make the whole thing look and behave the way you want.
+It ships with 42 ready-made snippets (git, npm, docker, network, system, files, utility) across 7 categories, a full editor for your own, and a Settings panel to make the whole thing look and behave the way you want.
 
 ## Feature tour
 
 **Launcher**
 - Global hotkey toggle, **customizable** in Settings (default `Ctrl+Shift+Space`, falls back to `Alt+Space` if taken)
 - Frameless, centered, transparent, rounded, always-on-top window with a soft CSS shadow — clean at any [UI scale](#appearance-theme-accent-color-density-blur-ui-scale), no artifacts
+- **Resizable**, with your chosen size remembered and restored next time — the layout reflows to fit rather than clipping or leaving dead space
 - Hides on `Escape`, on losing focus, or on closing — it never actually quits unless you tell it to (via the tray menu), so the hotkey and background state are always ready
 - System tray icon (generated in-process, no image assets) with **Show/Hide** and **Quit**
 - A one-time native notification the first time the app runs, pointing you at the hotkey/tray
@@ -64,38 +73,40 @@ It ships with 42 ready-made snippets (git, npm, docker, network, system, files, 
 - Add, **Edit**, **Duplicate**, and Delete snippets (delete shows an **Undo** toast)
 - **Pin** favorites so they always float to the top, and show up in the always-visible **favorites bar**
 - Custom **icon** per snippet (pick an emoji, or let it auto-derive from the tag) and an optional **notes** field
-- Auto-colored, auto-iconed tag chips (color is hashed from the tag name, so any custom tag you invent gets a consistent color for free), now with a matching rounded pill style in **group view**
+- Auto-colored, auto-iconed tag chips, consistent theme-correct dropdowns/comboboxes everywhere in the app
 - Free-text search across name, tag, command text, working directory, notes, and sequence steps
 - 4 sort modes: *Pinned first*, *A–Z*, *Most used*, *Recently run* — plus **manual drag-and-drop reordering**
 - *Group by category* view, with a **Run all** button per group
 - **Select mode** — multi-select any set of snippets across categories for a [batch run](#batch-run-select-multiple-order-them-run-sequentially-or-in-parallel)
 - Right-click any card for a quick actions menu
 - Per-snippet usage stats ("Ran 7× · last 2m ago") shown right on the card
+- A **Health** panel that scans your whole library for broken working directories, dangling run-before/run-after links, and recently-failing snippets
 
 **Execution**
 - Runs under **PowerShell, CMD, Git Bash, WSL, Node.js, or Python** — pick the shell per snippet
-- UTF‑8 forced end-to-end (with `PYTHONIOENCODING`/`PYTHONUTF8` set for Python specifically), so pipes, aliases, and Cyrillic/Ukrainian output render correctly instead of turning into `???`
-- Optional **working directory** per snippet, with a one-click **open in File Explorer** button
-- Optional **environment variables** per snippet, layered on top of the normal environment
-- Optional **stdin input** piped into the command as it runs
-- Optional **Run as Administrator** (PowerShell) — triggers a real UAC prompt and still captures stdout/stderr
-- **Multi-step sequences** — a snippet can be an ordered list of commands, run one after another, each with its own pass/fail status and output block
-- **Run after** — chain one snippet to auto-run right after another finishes successfully
-- **Scheduling** — run a snippet automatically on an interval, daily at a set time, or on a cron expression, entirely in the background
-- **Parameterized snippets** — drop `{{placeholder}}` tokens into a command and you'll be prompted for values right on the card before it runs; values you've saved as [global variables](#global-variables) pre-fill automatically
-- **Assertions** — optionally expect a specific exit code and/or output text; a pass/fail line appears under the result, independent of the raw exit code
-- **Copy**, or **"Copy as"** Markdown / a one-liner, or copy the last run's output, all in one click
-- **Open in a real terminal** — drop the same command into a real, interactive PowerShell/CMD window when one-shot output isn't enough
-- Output that looks like JSON is automatically pretty-printed; a **Diff vs last run** toggle shows what changed since the previous run
+- UTF‑8 forced end-to-end, so pipes, aliases, and Cyrillic/Ukrainian output render correctly instead of turning into `???`
+- Optional **working directory**, **environment variables**, **stdin input**, and **Run as Administrator** (PowerShell, real UAC prompt) per snippet
+- **Background/long-running processes** — Start/Stop/Restart a dev server, `docker compose up`, or a watcher instead of a one-shot run, with live streamed output and optional crash auto-restart
+- **Multi-step sequences**, **run-after chaining**, and **scheduling** (interval, daily, or cron)
+- **Parameterized snippets** — `{{placeholder}}` tokens prompt for values right on the card, pre-filled from [global variables](#global-variables-with-encrypted-secrets) when a name matches
+- **Assertions** — expect a specific exit code and/or output text, checked independently of the raw exit code
+- **Groups** (saved sets of snippets, run together) and **Pipelines** (branching graphs that take a different path on success/failure/output) — both their own full-screen views
+- **Copy**, or **"Copy as"** Markdown/one-liner, or copy the last run's output
+- **Open in a real terminal** when a one-shot run isn't enough
+- Output that looks like JSON is auto-pretty-printed; a **Diff vs last run** toggle shows what changed
 - Optional sound cue and desktop notification when a command finishes
-- **Developer mode** shows the exact executable/args actually sent to the OS for each run
+- **Developer mode** shows the exact executable/args actually sent to the OS
 
-**History, personalization & data safety**
-- Every run (single, sequence, scheduled, or batch) is logged with timestamp, exit code, duration, and truncated output — up to the last 100 runs, **searchable** in the history drawer
-- **Theme** (Dark/Light/System), **accent color**, **density**, **background blur**, and **UI scale** — all customizable in Settings, all rendered with theme-correct custom dropdown chevrons and focus glow, matching the rest of the UI
-- **Global variables** — name a value once, reuse it in any snippet's placeholders
-- **Launch at Windows startup** toggle
-- **Automatic rotating backups** of your snippet library, restorable from Settings
+**Automation beyond the launcher**
+- **External HTTP triggers** — a loopback-only, token-gated server so a scheduled task, CI job, or another local script can kick off a snippet without opening the app
+- **Shared/external snippet libraries** — subscribe to a URL serving a JSON snippet feed; it merges in read-mostly and refreshes on demand
+- **Import from terminal history** — turn commands you already typed into PowerShell or Git Bash into a saved snippet, without retyping them
+
+**History, personalization, security & data**
+- Every run (single, sequence, scheduled, batch, pipeline, or triggered) is logged with timestamp, exit code, duration, and output — up to the last 100 runs, **searchable** by name, command text, *or captured output*, with output viewable per entry behind its own toggle
+- **Theme** (Dark/Light/System), **accent color**, **density**, **background blur**, and **UI scale**, all applied instantly
+- **Global variables**, with a **secret** flag that both masks the value in the UI and encrypts it at rest (Windows DPAPI via Electron's `safeStorage`)
+- **Launch at Windows startup** toggle and **in-app self-update** (checks this repo's GitHub Releases)
 - **Export** your whole snippet library to a JSON file, or **Import** one (merged in, never overwrites existing snippets)
 
 ## Getting started
@@ -109,9 +120,11 @@ npm install
 npm start
 ```
 
-`npm start` runs `electron .`, which launches the app hidden in the tray. Press **`Ctrl+Shift+Space`** to bring up the launcher (the first time you run it, a notification reminds you of this).
+`npm start` runs `electron-vite dev` (a local Vite dev server for the renderer with hot reload, main/preload rebuilt automatically on change) and launches the app hidden in the tray. Press **`Ctrl+Shift+Space`** to bring up the launcher (the first time you run it, a notification reminds you of this).
 
 On first launch, `snippets.json` and `history.json` are created automatically in your user data folder, pre-seeded with the [default snippet library](#the-default-snippet-library).
+
+To build an installable/portable copy: `npm run build` (NSIS installer) or `npm run build:portable` (portable `.exe`) — see [Development](#development).
 
 ## Using the launcher
 
@@ -121,6 +134,7 @@ On first launch, `snippets.json` and `history.json` are created automatically in
 4. Click **Run** (or select a card and press `Enter`, or press `1`–`9` for one of the first nine visible cards) to execute it. Output — stdout and stderr — appears in a console block right under the card.
 5. Click **Copy** to copy the raw command to your clipboard instead of running it.
 6. Press `Escape` (or click outside the window) to hide the launcher again — your place is remembered for next time.
+7. Drag an edge or corner of the window to resize it — the layout reflows, and the new size is remembered for next time.
 
 **Example session:**
 
@@ -137,7 +151,7 @@ Escape                     → launcher hides
 | Shortcut | Action |
 |---|---|
 | `Ctrl+Shift+Space` / `Alt+Space` (or your [custom hotkey](#custom-global-hotkey)) | Toggle the launcher window (works globally, even when unfocused) |
-| `Escape` | Hide the window — or close whatever modal/drawer/menu/dropdown is open |
+| `Escape` | Hide the window — or close whatever screen/modal/drawer/menu/dropdown is open |
 | `↑` / `↓` | Move selection up/down the visible list |
 | `Enter` | Run the selected snippet |
 | `1`–`9` | Instantly run the 1st–9th visible snippet |
@@ -159,7 +173,7 @@ A snippet has:
 - **Name** — what shows on the card, e.g. `Check listening ports`
 - **Tag / category** — free text, e.g. `network`; any tag you type gets its own auto-generated color and icon
 - **Command** (or a multi-step sequence) — the shell text to run
-- Optional **working directory**, **shell**, **environment variables**, **stdin**, **Run as Administrator**, **expected exit code / output**, **run-after chaining**, **schedule**, and free-form **notes**
+- Optional **working directory**, **shell**, **environment variables**, **stdin**, **Run as Administrator**, **background process**, **expected exit code / output**, **run-after chaining**, **schedule**, and free-form **notes**
 
 **Minimal example** — a snippet that lists the five biggest files in Downloads:
 
@@ -225,19 +239,22 @@ Running it prompts for `host`; typing `github.com` and confirming runs:
 Test-Connection github.com -Count 4
 ```
 
-Multiple placeholders are supported — each gets its own input row, in the order they first appear. If a placeholder's name matches a saved [global variable](#global-variables), its field is pre-filled automatically (still editable per run).
+Multiple placeholders are supported — each gets its own input row, in the order they first appear. If a placeholder's name matches a saved [global variable](#global-variables-with-encrypted-secrets), its field is pre-filled automatically (still editable per run).
 
-## Global variables
+A snippet with an unresolved placeholder is skipped (marked "needs input") in every unattended context — scheduled runs, run-after chains, batch/group "Run all", pipelines, and external triggers — since there's nowhere to prompt for a value there.
+
+## Global variables (with encrypted secrets)
 
 Open **Settings → Manage variables…** to define reusable name/value pairs — for example `server = prod-db-01` or `user = svc-deploy`. From then on, any snippet with a matching `{{server}}` or `{{user}}` placeholder pre-fills that value the moment you click Run, across your *entire* library, without retyping it snippet by snippet.
 
-- Mark a variable **secret** to mask it as a password field in the UI (it's still stored as plain, unencrypted JSON locally — this hides it from a glance over your shoulder, it's not a credential vault).
+- Mark a variable **secret** to mask it as a password field in the UI — and to actually **encrypt its value at rest** using Electron's `safeStorage` (backed by Windows DPAPI, tied to your Windows user account on this machine). A non-secret variable is stored as plain text, same as before.
+- Because a DPAPI-encrypted value only decrypts on the same machine/account that wrote it, a secret variable is **not** portable — it isn't included in snippet export/import, and copying `variables.json` to another PC (or account) won't let that copy read the secret's value back.
 - Whenever you run a snippet and type a value for a placeholder that already has a matching variable, that variable's stored value is quietly updated to match — so it stays current without extra steps.
-- Variables are stored in `variables.json` in your user data folder (see [Where your data lives](#where-your-data-lives)) and aren't included in snippet export/import.
+- Variables are stored in `variables.json` in your user data folder (see [Where your data lives](#where-your-data-lives)).
 
 ## Multi-step sequences
 
-Toggle **"Multi-step sequence"** in the editor to turn a snippet into an ordered list of steps instead of one command. Each step runs after the previous one finishes, and the output console shows a separate pass/fail block per step — a sequence never stops on the first failure, so you always see the full picture.
+Toggle **"Multi-step sequence"** in the editor to turn a snippet into an ordered list of steps instead of one command. Each step runs after the previous one finishes, and the output console shows a separate pass/fail block per step — a sequence never stops on the first failure by default (there's also a **"Stop on first failed step"** toggle if you want that instead).
 
 ```
 Name:  Morning network check
@@ -248,11 +265,11 @@ Steps:
   3. Get-NetTCPConnection -State Listen | Measure-Object | Select-Object Count
 ```
 
-Placeholders work inside sequence steps too, and are collected once up front before the whole sequence runs. (Multi-step sequences don't support per-step stdin — that's single-command only.)
+Placeholders work inside sequence steps too, and are collected once up front before the whole sequence runs. (Multi-step sequences don't support per-step stdin or the background-process toggle — both are single-command-only.)
 
 ## Working directory, environment variables, stdin & Run as Administrator
 
-**Working directory** — set once per snippet, so you don't have to `cd`/`Set-Location` inside the command itself. A small folder icon appears on the card to open it directly in File Explorer.
+**Working directory** — set once per snippet, so you don't have to `cd`/`Set-Location` inside the command itself. A small folder icon appears on the card to open it directly in File Explorer. The [Health panel](#health--catching-problems-before-you-hit-them) flags a working directory that no longer exists.
 
 **Environment variables** — add any number of `KEY=value` pairs in the editor; they're layered on top of the normal process environment for that run only:
 
@@ -268,19 +285,29 @@ Env:     NODE_ENV=production
 
 **Run as Administrator** — check the box (PowerShell only) and Snippet Runner triggers a real Windows UAC prompt; if you accept it, the command runs elevated and its output is still captured and shown normally (look for the small shield badge next to the snippet's name).
 
+## Background & long-running processes
+
+Toggle **"Run as a background process"** (single-command snippets only) to turn Run into **Start/Stop** for something that's meant to keep running — a dev server, `docker compose up`, `tail -f`, a file watcher. Once started:
+
+- Output streams live into the card's console as it happens, instead of waiting for the process to finish.
+- A **Restart** button resets it with the same options.
+- **"Restart automatically if it crashes"** gives a crashed (non-zero-exit, not manually-stopped) process up to 5 automatic restarts, resetting that budget once it's stayed up a minute.
+- Stopping kills the whole process tree, not just the immediate child — the actual work (node/docker/ngrok…) is very often a grandchild of the shell that was spawned, and a shallow kill would otherwise orphan it running invisibly.
+- Background processes survive **hiding** the launcher window (that's the point), but are all stopped when you actually **quit** the app — nothing keeps running invisibly after Snippet Runner itself exits.
+
 ## Assertions ("expect")
 
 Optionally set **Expect exit code** and/or **Expect output contains** in the editor. After the run, a green "✓ Expectation met" or red "✗ Expectation failed — …" line appears under the result — independent of whether the raw exit code was 0. Handy for turning an ad-hoc command into a lightweight smoke test, e.g. expecting a health-check endpoint's response to contain `"status":"ok"`.
 
 ## Run after — chaining snippets together
 
-In the editor, set **Run after** to another snippet's name. The moment that other snippet finishes *successfully*, this one runs automatically — a toast announces the auto-run. Chains can run several snippets deep (capped at 5 hops to guard against an accidental A→B→A loop), but a chained snippet that itself needs placeholder input is skipped with a warning rather than run blind (there's nowhere to prompt for the value in an unattended chain).
+In the editor, set **Run after** to another snippet's name. The moment that other snippet finishes *successfully*, this one runs automatically — a toast announces the auto-run. Chains can run several snippets deep (capped at 5 hops to guard against an accidental A→B→A loop), but a chained snippet that itself needs placeholder input is skipped with a warning rather than run blind.
 
 ```
 "Build"  →  (on success) →  "Run tests"  →  (on success) →  "Deploy"
 ```
 
-Set each one's **Run after** to point at the snippet before it, and running "Build" cascades through the whole chain.
+Set each one's **Run after** to point at the snippet before it, and running "Build" cascades through the whole chain. A snippet's **Details** panel (the ⓘ button on its card) shows this chain in both directions, plus which groups and pipelines it belongs to — useful before you rename or delete something with dependents.
 
 ## Scheduling: interval, daily, or cron
 
@@ -288,9 +315,13 @@ Toggle **"Run on a schedule"** in the editor and pick a mode:
 
 - **Every N minutes** — runs on a fixed interval as long as the app is running.
 - **Daily at** — runs once at a specific time each day.
-- **Cron** — a standard 5-field expression (`minute hour day-of-month month day-of-week`), supporting `*`, `*/n` steps, ranges, and comma lists — e.g. `*/15 * * * *` for every 15 minutes, or `0 9 * * 1-5` for 9am on weekdays.
+- **Cron** — a standard 5-field expression (`minute hour day-of-month month day-of-week`), supporting `*`, `*/n` steps, ranges, comma lists, and named months/days — e.g. `*/15 * * * *` for every 15 minutes, or `0 9 * * 1-5` for 9am on weekdays.
 
-Scheduled runs happen entirely in the background (checked every 30 seconds), get logged to [run history](#run-history--diff-vs-previous-run) as `"<name> (scheduled)"`, and trigger their own native notification regardless of the general notification toggle. There's no built-in filter on what can be scheduled — anything enabled and due runs, so only schedule what you're comfortable running unattended.
+Scheduled runs happen entirely in the background (checked every 30 seconds), get logged to [run history](#run-history-output--search) as `"<name> (scheduled)"`, and trigger their own native notification regardless of the general notification toggle — clicking it reopens the launcher on run history. There's no built-in filter on what can be scheduled — anything enabled and due runs, so only schedule what you're comfortable running unattended.
+
+## Schedule overview
+
+Click the calendar icon in the header to see **every scheduled snippet in one place**, soonest-due first — each row shows its schedule ("every 15 minutes", "daily at 09:00", "cron \"0 9 * * 1-5\"") and roughly when it's next due ("in 4h", "any moment now"). From here you can jump straight into a snippet's editor, or click **Run now** to fire it immediately without waiting.
 
 ## Batch run: select multiple, order them, run sequentially or in parallel
 
@@ -300,7 +331,24 @@ Click the checkbox icon in the header to enter **select mode** — every card ge
 2. Choose **Sequential** (one after another, in that order) or **Parallel** (all fired off at once).
 3. Click **Run**.
 
-Parameterized snippets in the selection (they'd need placeholder input mid-batch, which there's no unattended way to provide) are skipped automatically and marked as such. Everything else gets its own **live** result row right in the dialog — a status dot that goes pending → running → green/red, and a click-to-expand output block — updating as each snippet finishes rather than running blind and only showing up in history afterward.
+Parameterized snippets in the selection are skipped automatically and marked as such. Everything else gets its own **live** result row right in the dialog — a status dot that goes pending → running → green/red, and a click-to-expand output block — updating as each snippet finishes.
+
+## Groups — saved sets of snippets
+
+Click the layers icon in the header to open **Groups** — a full-screen view of every saved group as a card, each showing how many snippets it contains and a description. Click **+ New group** to name one and check off which snippets belong to it; from then on, click **Run** on the group's card to run every member together through the same live-output dialog batch run uses, without reselecting them each time.
+
+A group is just a list of snippet ids, not a copy — it always reflects each member's current command/tag/etc., and a deleted member is silently skipped rather than breaking the group. A snippet's card shows a small badge when it belongs to one or more groups; its **Details** panel links straight into each group's editor.
+
+## Pipelines — branching visual graphs
+
+Click the branching-path icon in the header to open **Pipelines** — a full-screen node-graph editor (built on React Flow) for chaining snippets with actual branching logic, not just a straight line. Click **+ New pipeline**, then:
+
+1. **+ Add step** to place a snippet on the canvas.
+2. Drag from a step's connection dot onto another step to link them.
+3. Click a connection to choose its **condition** — *succeeds*, *fails*, *either way*, *exits with a specific code*, or *output contains text* — the step it points to only runs if that condition is met by the step before it.
+4. **Auto-arrange** lays every step out left-to-right in dependency order with one click, undoing a canvas that's turned into a tangle.
+
+Every root step (nothing points into it) starts in parallel when you run the pipeline; from there, each finished step's satisfied outgoing connections fire the next step(s) — a step runs the first time *any* satisfied incoming connection reaches it. Running a saved pipeline (or one you're editing) opens the same live per-step results dialog batch run and groups use. A snippet's **Details** panel lists which pipelines it's used in, same as it does for groups.
 
 ## Open in a real terminal
 
@@ -310,11 +358,11 @@ Every card has a small terminal icon — click it to drop the snippet's command 
 
 - Click any tag chip under the search box to filter to that category; click **All** (or the same chip again) to clear the filter.
 - The sort dropdown next to the chips offers **Pinned first** (manual order, pins always on top), **A–Z**, **Most used**, and **Recently run**.
-- The grid icon button toggles **group view**, which clusters the list under sticky, rounded category headers, each with its own **Run all** button — it runs every snippet in that category back-to-back (parameterized ones skipped, same as batch run) through the same live-output dialog batch run uses, rather than running blind.
+- The grid icon button toggles **group view**, which clusters the list under sticky, rounded category headers, each with its own **Run all** button — it runs every snippet in that category back-to-back (parameterized ones skipped, same as batch run) through the same live-output dialog batch run uses.
 
 ## Favorites bar
 
-Pin any snippet and it also appears as a small colored icon in a slim bar right under the search box — one click runs it immediately, regardless of what you've searched for or filtered to (the launcher clears the filter, scrolls to the card, and clicks its Run button for you, so a parameterized snippet still shows its inline placeholder form first, same as clicking Run on the card directly).
+Pin any snippet and it also appears as a small colored icon in a slim bar right under the search box — one click runs it immediately, regardless of what you've searched for or filtered to.
 
 ## Drag-and-drop reordering
 
@@ -322,22 +370,53 @@ When the sort mode is **Pinned first** and you aren't searching, filtering by ta
 
 ## "Copy as" and the right-click menu
 
-- The **Copy** button has a small chevron next to it — click it for **Copy as Markdown** (a fenced code block tagged with the snippet's shell, ready to paste into a doc or README) or **Copy as one-liner** (steps joined with `;` for a multi-step sequence). The dropdown always renders above the cards below it, never clipped.
+- The **Copy** button has a small chevron next to it — click it for **Copy as Markdown** (a fenced code block tagged with the snippet's shell, ready to paste into a doc or README) or **Copy as one-liner** (steps joined with `;` for a multi-step sequence).
 - **Right-click** any card for a quick menu: Run, Open in terminal, Copy command, Edit, Duplicate, Pin/Unpin, Delete — without hunting for the small buttons.
 
-## Run history & diff-vs-previous-run
+## Run history, output & search
 
-Click the clock icon (or `Ctrl+H`) to open the history drawer — the last 100 runs, newest first, each showing the snippet name, a green/red status dot, relative time, and the exact command that ran. A search box at the top (with proper breathing room, not jammed against the header) filters the list by snippet name or command text. From there you can:
+Click the clock icon (or `Ctrl+H`) to open the history drawer — the last 100 runs, newest first, each showing the snippet name, a green/red status dot, relative time, and the exact command that ran. From there you can:
 
-- **Re-run** any past command instantly
-- **Copy** it to the clipboard
-- **Clear** the whole log
+- **Re-run** any past command instantly, or **Copy** it to the clipboard.
+- Click **Output** on any entry to expand its captured stdout/stderr right there in the list, without re-running it — collapsed by default so the list stays scannable.
+- **Search** the whole history — the search box matches not just the snippet name and command text, but the *captured output* too, so you can find "that run where it said connection refused" even if you don't remember which snippet it was.
+- **Clear** the whole log.
 
-Back on the card itself, once a snippet has run at least twice, a **"Diff vs last run"** toggle appears under the output — expand it to see which output lines were added or removed compared to the previous run. Great for "did anything change" checks like disk space, process lists, or `git status`.
+Back on the card itself, once a snippet has run at least twice, a **"Diff vs last run"** toggle appears under the output — expand it to see which output lines were added or removed compared to the previous run.
 
 ## Undoing a delete
 
 Deleting a snippet doesn't ask for confirmation up front — instead it disappears immediately and a toast appears at the bottom with an **Undo** button, active for a few seconds. Click it (or don't) — either way, nothing is lost until the toast disappears.
+
+## Health — catching problems before you hit them
+
+Click the pulse icon in the header to open **Health** — a scan of your whole library for issues that don't show up until you actually run something:
+
+- A **working directory that no longer exists** (moved or deleted since the snippet was set up).
+- A **run-before/run-after link pointing at a deleted snippet**.
+- A snippet whose **most recent run failed**.
+
+Every flagged snippet links straight to its Details panel or its editor ("Fix…") — Health never changes anything on its own, it only surfaces what's worth a look. Click **Rescan** any time to refresh it (e.g. after fixing a path).
+
+## Import from terminal history
+
+Click the history-arrow icon in the header to browse commands you've **already typed** into PowerShell (via its PSReadLine history) or Git Bash (`.bash_history`) on this machine. Filter the list, check off one or more lines, optionally give the result a name, and click **Create snippet** — a single checked line becomes a one-command snippet, several become an ordered multi-step sequence (in the order you originally typed them). **Create & edit…** does the same thing and then drops you straight into the full editor to refine it further (tag, working directory, schedule, etc.).
+
+## External triggers — running a snippet from outside the launcher
+
+Open **Settings → Triggers** to turn on a small local HTTP server that lets something *outside* Snippet Runner start a snippet — a Windows scheduled task, a CI job on the same machine, another script you already have. It's bound to `127.0.0.1` only (never reachable over the network) and gated by a generated token:
+
+```
+POST http://127.0.0.1:<port>/run/<snippetId>?token=<token>
+```
+
+(the token can also be sent as an `X-Trigger-Token` header instead of a query parameter). Copy a snippet's id from its **Details** panel. A triggered run is logged to history as `"<name> (triggered)"`, fires the same completion notification a scheduled run does, and — like every other unattended path in this app — refuses a snippet with unresolved `{{placeholder}}` tokens rather than running it blind. Regenerate the token any time from the same Settings section to invalidate the old one immediately.
+
+## Shared/external snippet libraries
+
+Open **Settings → Shared libraries** to subscribe to a URL that serves a JSON array of snippets (the same shape [export](#settings-startup-updates-export--import) produces). Paste the URL and click **Subscribe** — its snippets are fetched, validated, and merged into your library, each one badged so it's clear where it came from. Click **Sync** any time to re-fetch and pick up changes; a snippet you've pinned or run stays pinned/keeps its run stats across a re-sync, but the command/tag/etc. itself always reflects the source. Click the trash icon to unsubscribe, which removes every snippet that library added (anything you've customized locally isn't touched).
+
+The fetch happens in the main process, not the renderer — the app's content-security policy blocks the renderer from calling out to arbitrary URLs on its own, so this is the one deliberate, user-initiated exception, done in the one process actually allowed to make it.
 
 ## Appearance: theme, accent color, density, blur, UI scale
 
@@ -349,8 +428,6 @@ Open **Settings → Appearance** to make the launcher look the way you want:
 - **Background blur** — how much of the desktop shows (blurred) through the launcher.
 - **UI scale** — 85%–125%, scales the entire interface if you want things bigger or smaller. The window always renders edge-to-edge at any scale — no black gaps at the borders.
 
-All dropdowns across the app draw their own theme-correct chevron and get a focus glow matching the accent color, so appearance stays consistent everywhere, not just on the main list.
-
 All of these are saved per-device (in the browser-style local storage of the app window) and apply instantly as you change them — no restart needed.
 
 ## Sound, desktop notifications & Developer mode
@@ -358,22 +435,23 @@ All of these are saved per-device (in the browser-style local storage of the app
 Also in **Settings → Behavior**:
 
 - **Play a sound when a command finishes** — a short synthesized tone (higher pitch for success, lower for failure); no audio files involved.
-- **Show a desktop notification when a command finishes in the background** — a native Windows notification, shown only when the launcher window isn't the one you're currently looking at, so you're not double-notified while watching it run.
-- **Developer mode** — shows the exact executable and arguments Snippet Runner actually handed to Windows for each run (e.g. `→ powershell.exe ["-NoProfile","-NonInteractive","-Command","..."]`), right under the output. Useful when a snippet behaves differently than you'd expect and you want to see exactly what ran.
+- **Show a desktop notification when a command finishes in the background** — a native Windows notification, shown only when the launcher window isn't the one you're currently looking at.
+- **Developer mode** — shows the exact executable and arguments Snippet Runner actually handed to Windows for each run, right under the output.
 
 ## Custom global hotkey
 
 In **Settings → Behavior**, click the **Global hotkey** field, press the key combination you want (e.g. `Ctrl+Alt+K`), then click **Save**. If the combination is already claimed by another app, Snippet Runner tells you and keeps the previous one active — you're never left without a working hotkey.
 
-## Settings: startup, backups, export & import
+## Settings: startup, updates, export & import
 
-Click the gear icon to open Settings → **Data**:
+Click the gear icon to open Settings:
 
-- **Launch Snippet Runner at Windows startup** — toggles `openAtLogin` so the tray icon (and hotkey) are available as soon as you log in.
-- **Manage variables…** — opens the [global variables](#global-variables) manager.
-- **Automatic backups** — every meaningful change to your snippet library is snapshotted first (throttled to at most once every 5 minutes, keeping the last 10). Pick any backup from the list and click **Restore** to roll back — restoring itself takes a fresh snapshot first, so a restore is never a one-way trip either.
+- **Launch Snippet Runner at Windows startup** (Data section) — toggles `openAtLogin` so the tray icon (and hotkey) are available as soon as you log in.
+- **Manage variables…** — opens the [global variables](#global-variables-with-encrypted-secrets) manager.
+- **Updates** — shows the running version and a **Check for updates** button; if a newer release is published on this project's GitHub Releases, you can download it and restart to install, all as explicit clicks (nothing updates itself silently in the background).
 - **Export snippets…** — saves your entire library to a JSON file you choose, e.g. for backup or moving to another machine.
-- **Import snippets…** — pick a previously exported JSON file; its snippets are **added** to your existing library (with fresh IDs, so nothing is overwritten or duplicated by accident).
+- **Import snippets…** — pick a previously exported JSON file; its snippets are **added** to your existing library (with fresh ids, so nothing is overwritten or duplicated by accident).
+- **Triggers** and **Shared libraries** — see their own sections above.
 
 **Example exported file shape** (trimmed):
 
@@ -396,8 +474,12 @@ Click the gear icon to open Settings → **Data**:
     "notes": "Handy for a quick reachability check.",
     "env": null,
     "expect": null,
-    "runAfter": null,
-    "schedule": null
+    "runAfterThis": null,
+    "runBefore": null,
+    "schedule": null,
+    "background": false,
+    "autoRestart": false,
+    "externalSource": null
   }
 ]
 ```
@@ -436,52 +518,68 @@ Everything is stored locally, per Windows user, under:
 ```
 %APPDATA%\snippet-runner\snippets.json      — your snippet library
 %APPDATA%\snippet-runner\history.json       — the last 100 command runs
-%APPDATA%\snippet-runner\variables.json     — your global variables
-%APPDATA%\snippet-runner\app-settings.json  — custom hotkey, first-run flag
-%APPDATA%\snippet-runner\backups\           — automatic rotating snippet-library backups (last 10)
+%APPDATA%\snippet-runner\variables.json     — your global variables (secrets encrypted at rest)
+%APPDATA%\snippet-runner\groups.json        — your saved groups
+%APPDATA%\snippet-runner\pipelines.json     — your saved pipelines
+%APPDATA%\snippet-runner\libraries.json     — subscribed external library URLs
+%APPDATA%\snippet-runner\app-settings.json  — custom hotkey, window size, trigger config
 ```
 
 Appearance and behavior preferences (theme, accent color, density, blur, UI scale, sound/notification/developer-mode toggles, sort mode, group view) live in the launcher window's own local storage rather than these files, since they're per-device display preferences rather than library data.
 
-There is no cloud sync, telemetry, or network call other than the commands you explicitly run yourself (e.g. the built-in "Public IP address" snippet).
+There is no cloud sync or telemetry. The only network calls Snippet Runner makes on its own are: the commands you explicitly run yourself (e.g. the built-in "Public IP address" snippet), an update check against this repo's GitHub Releases, a subscribed library URL you added yourself, and an external trigger request you (or something you set up) send to the loopback server you turned on yourself.
 
 ## Security model
 
 - `nodeIntegration: false`, `contextIsolation: true`, `sandbox: true` on the `BrowserWindow` — the UI has no direct access to Node.js or Electron internals.
-- All filesystem, clipboard, shell-execution, and OS-integration (notifications, opening a folder, opening a terminal, the login-item toggle) access goes through a narrow `window.electronAPI` surface exposed by `src/preload/index.js` via `contextBridge`, backed by `ipcMain` handlers in the main process.
+- All filesystem, clipboard, shell-execution, and OS-integration access goes through a narrow `window.electronAPI` surface exposed by `src/preload/index.ts` via `contextBridge`, backed by `ipcMain` handlers in the main process.
 - Commands run exactly as you — no privilege escalation happens silently; **Run as Administrator** always shows a real Windows UAC consent prompt, and is only wired up for PowerShell.
-- Global variables marked "secret" are hidden in the UI but stored as plain JSON locally — treat them as a convenience, not a credential vault.
-- **There is no destructive-command guard.** Earlier versions of Snippet Runner blocked/confirmed commands matching patterns like `Remove-Item`, `Format-Volume`, `shutdown`, etc. That's gone, everywhere — no confirm-click, no scheduler skip, no batch-run skip. A snippet runs exactly when you tell it to (directly, scheduled, chained, or batched), full stop. This app can run anything a script you typed into a terminal yourself could — including something destructive — and that responsibility sits with whoever writes and triggers the snippet, not the app.
+- A variable marked "secret" is encrypted at rest via Windows DPAPI (`safeStorage`), tied to your Windows user account on this machine — it's real encryption, but it's still a convenience, not a general-purpose credential vault, and it isn't portable to another machine/account.
+- The external trigger server binds to `127.0.0.1` only and requires a token on every request — it is never reachable from the network, only from this same machine.
+- **There is no destructive-command guard.** Earlier versions of Snippet Runner blocked/confirmed commands matching patterns like `Remove-Item`, `Format-Volume`, `shutdown`, etc. That's gone, everywhere — no confirm-click, no scheduler skip, no batch-run skip, no trigger-side check. A snippet runs exactly when you tell it to (directly, scheduled, chained, batched, piped through a pipeline, or triggered externally), full stop. This app can run anything a script you typed into a terminal yourself could — including something destructive — and that responsibility sits with whoever writes and triggers the snippet, not the app.
 
 ## Project structure
 
-The app is split into three processes — `src/main` (Node/OS access), `src/preload` (the only bridge between them), `src/renderer` (pure UI, no Node access) — each further split into small, single-purpose files by concern rather than kept as one big file per process:
+The app is split into three processes — `src/main` (Node/OS access), `src/preload` (the only bridge between them), `src/renderer` (UI) — built with **TypeScript + React** via `electron-vite`, each further split into small, single-purpose files by concern:
 
 ```
-src/main/               Electron main process — the only side with Node/OS access
-  index.js                entry point: pure wiring (window/tray/hotkey/IPC/scheduler startup)
-  window.js               the launcher BrowserWindow: create/show/hide/toggle
-  tray.js                 tray icon + its menu
-  hotkey.js               global-shortcut registration, with safe fallback
-  icon.js                 hand-rolled PNG encoder for the tray/window icon (no image assets)
-  ipc.js                  every ipcMain handler — delegates to shell/*, storage/*, terminal
-  scheduler.js             the 30s background tick: interval/daily/cron due-checks, scheduled runs
-  paths.js, id.js, ps-quote.js, env-utils.js   small shared helpers
+src/main/                 Electron main process — the only side with Node/OS access
+  index.ts                  entry point: pure wiring (window/tray/hotkey/IPC/scheduler/trigger-server startup)
+  window.ts                 the launcher BrowserWindow: create/show/hide/toggle, resizable + persisted size
+  tray.ts                   tray icon + its menu
+  hotkey.ts                 global-shortcut registration, with safe fallback
+  icon.ts                   hand-rolled PNG encoder for the tray/window icon (no image assets)
+  ipc.ts                    every ipcMain handler — delegates to shell/*, storage/*, terminal
+  scheduler.ts              the 30s background tick: interval/daily/cron due-checks, scheduled runs
+  unattendedRun.ts          shared "run this snippet with no one watching" logic (scheduler + triggers)
+  triggerServer.ts          the optional loopback HTTP trigger server
+  updater.ts                electron-updater wrapper: manual check/download/install
+  paths.ts, id.ts, ps-quote.ts, env-utils.ts   small shared helpers
   shell/
-    exec.js                the multi-shell execFile engine (PowerShell/CMD/Git Bash/WSL/Node/Python)
-    terminal.js             opens a real, visible, interactive terminal window
+    exec.ts                  the multi-shell execFile engine (PowerShell/CMD/Git Bash/WSL/Node/Python)
+    process-manager.ts        spawn-and-stream engine for background/long-running snippets
+    terminal.ts               opens a real, visible, interactive terminal window
+    history-import.ts         reads real PowerShell/Git Bash history for the import screen
   storage/
-    snippets.js             snippet schema + sanitizer (DEFAULT_SNIPPETS lives here)
-    history.js, app-settings.js, variables.js, backups.js
+    snippets.ts               snippet schema + sanitizer (DEFAULT_SNIPPETS lives here)
+    history.ts, app-settings.ts, variables.ts, groups.ts, pipelines.ts, libraries.ts
 
-src/preload/index.js    contextBridge — the only surface the renderer can reach
+src/preload/index.ts      contextBridge — the only surface the renderer can reach
 
-src/renderer/            pure UI — no Node access, everything goes through window.electronAPI
+src/shared/types/          hand-written types + zod schemas, imported by both main and renderer
+
+src/renderer/               UI — no Node access, everything goes through window.electronAPI
   index.html, style.css
-  app.js                  entry point: wires top-level DOM events, bootstraps state
-  modules/                one ES module per concern (state, dom, cards, run-engine,
-                           editor-modal, batch/batch-runner, scheduler UI, history-drawer,
-                           variables-modal, settings-modal, menus, keyboard, theming, …)
+  app.ts                     entry point: header wiring, initial load, side-effect imports
+  modules/                   state.ts (shared mutable state), dom.ts (element refs), batch.ts
+  src/
+    main.tsx                 React entry point (#reactRoot)
+    App.tsx                  every full-screen/modal/drawer surface
+    components/              Card/, Modals/ (Editor, History, Groups, Pipelines, Health,
+                              Schedule, TerminalHistory, Settings, …), shared/, TagFilters, FavoritesBar
+    store/                   one Zustand store per feature
+    lib/                     runEngine, processEngine, pipelineEngine, keyboard, events,
+                              snippetsStore, appearance, scheduleOverview, utils, …
 ```
 
 See `CLAUDE.md` for the full architecture walkthrough (why each split exists, the conventions each module follows) if you're extending the app.
@@ -493,6 +591,8 @@ npm install
 npm start
 ```
 
-There's no bundler, test suite, or lint config — main/preload are plain CommonJS and the renderer is loaded directly by Electron as native ES modules (`<script type="module">`), no build step either way. After editing, just restart the app (`npm start`) to try your changes.
+- **Typecheck**: `npm run typecheck`
+- **Unit tests**: `npm test` (Vitest — covers main-process pure logic: sanitizers, per-shell invocation building, the cron/schedule matcher)
+- **Build an installer**: `npm run build` (NSIS) or `npm run build:portable` (portable `.exe`)
 
-To catch syntax errors without launching the app: `node --check` for any `src/main/**/*.js` or `src/preload/**/*.js` file; for a `src/renderer/modules/*.js` file (ES module syntax, but `package.json` declares `"type": "commonjs"` so plain `node --check` won't parse `import`/`export`), pipe it through stdin with the module flag instead: `node --input-type=module --check < src/renderer/modules/whatever.js`.
+`npm start` runs `electron-vite dev` — hot-reloads the renderer on save; a main/preload change rebuilds and relaunches the app automatically.

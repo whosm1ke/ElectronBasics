@@ -10,4 +10,15 @@ export interface AppSettings {
   // every show (see window.ts's showWindow()), which is intentional
   // launcher behavior independent of resizing.
   windowSize: { width: number; height: number } | null;
+  // External HTTP trigger (src/main/triggerServer.ts) — off by default. A
+  // loopback-only server that runs a snippet on `POST /run/:snippetId` when
+  // the request carries the matching `token`, so e.g. a CI job or another
+  // local script can kick off a snippet without opening the launcher.
+  trigger: TriggerConfig;
+}
+
+export interface TriggerConfig {
+  enabled: boolean;
+  port: number; // 1024-65535
+  token: string; // opaque, regenerable — required on every request
 }

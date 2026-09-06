@@ -9,6 +9,7 @@ import { registerHotkey, getCurrentHotkey } from './hotkey';
 import { runShellCommand } from './shell/exec';
 import { openTerminal } from './shell/terminal';
 import * as processManager from './shell/process-manager';
+import { readShellHistorySources } from './shell/history-import';
 import { envListToObject } from './env-utils';
 import { newId } from '@shared/id';
 
@@ -18,7 +19,10 @@ import * as appSettingsStore from './storage/app-settings';
 import * as variablesStore from './storage/variables';
 import * as groupsStore from './storage/groups';
 import * as pipelinesStore from './storage/pipelines';
+import * as librariesStore from './storage/libraries';
 import * as updater from './updater';
+import crypto from 'node:crypto';
+import { startTriggerServer, stopTriggerServer, isTriggerServerRunning } from './triggerServer';
 
 import type {
   RunCommandPayload,
@@ -27,6 +31,7 @@ import type {
   OpenTerminalPayload,
   StartProcessPayload,
   Snippet,
+  TriggerConfig,
 } from '@shared/types';
 
 export function registerIpcHandlers(): void {
@@ -242,6 +247,64 @@ export function registerIpcHandlers(): void {
     return pipelinesStore.writePipelines(pipelines);
   });
 
+  // Backs the Health panel's "missing working directory" check — a plain
+  // fs.existsSync, but the renderer has no fs access of its own (sandboxed,
+  // no Node integration), so even this one-line check needs a round trip.
+  ipcMain.handle('path-exists', async (_event: IpcMainInvokeEvent, targetPath: string) => {
+    if (typeof targetPath !== 'string' || !targetPath.trim()) return false;
+    try {
+      return fs.existsSync(targetPath);
+    } catch {
+      return false;
+    }
+  });
+
+  ipcMain.handle('get-shell-history', async () => {
+    return readShellHistorySources();
+  });
+
+  ipcMain.handle('get-libraries', async () => {
+    return librariesStore.readLibraries();
+  });
+
+  ipcMain.handle('add-library', async (_event: IpcMainInvokeEvent, url: string) => {
+    if (typeof url !== 'string' || !url.trim()) return { ok: false, error: 'Enter a URL first' };
+    const libraries = librariesStore.readLibraries();
+    if (libraries.some((l) => l.url === url.trim())) return { ok: false, error: 'Already subscribed to that URL' };
+    let name = url.trim();
+    try { name = new URL(url.trim()).host; } catch { /* keep the raw url as the name if it's somehow not parseable here */ }
+    const library = librariesStore.sanitizeLibrary({ url: url.trim(), name });
+    try {
+      const { snippets, count } = await librariesStore.syncLibrary(library);
+      library.lastSyncedAt = new Date().toISOString();
+      library.lastSyncCount = count;
+      const saved = librariesStore.writeLibraries([...libraries, library]);
+      return { ok: true, libraries: saved, snippets, count };
+    } catch (err) {
+      return { ok: false, error: String((err as Error).message || err) };
+    }
+  });
+
+  ipcMain.handle('sync-library', async (_event: IpcMainInvokeEvent, libraryId: string) => {
+    const libraries = librariesStore.readLibraries();
+    const library = libraries.find((l) => l.id === libraryId);
+    if (!library) return { ok: false, error: 'That library was already removed' };
+    try {
+      const { snippets, count } = await librariesStore.syncLibrary(library);
+      library.lastSyncedAt = new Date().toISOString();
+      library.lastSyncCount = count;
+      const saved = librariesStore.writeLibraries(libraries);
+      return { ok: true, libraries: saved, snippets, count };
+    } catch (err) {
+      return { ok: false, error: String((err as Error).message || err) };
+    }
+  });
+
+  ipcMain.handle('remove-library', async (_event: IpcMainInvokeEvent, libraryId: string) => {
+    const { libraries, snippets } = librariesStore.removeLibraryAndSnippets(libraryId, librariesStore.readLibraries());
+    return { libraries, snippets };
+  });
+
   ipcMain.handle('open-path', async (_event: IpcMainInvokeEvent, targetPath: string) => {
     if (typeof targetPath !== 'string' || !targetPath.trim()) return { ok: false };
     try {
@@ -266,6 +329,30 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle('quit-and-install', async () => {
     updater.quitAndInstall();
+  });
+
+  ipcMain.handle('get-trigger-config', async (): Promise<TriggerConfig & { running: boolean }> => {
+    const { trigger } = appSettingsStore.readAppSettings();
+    return { ...trigger, running: isTriggerServerRunning() };
+  });
+
+  ipcMain.handle('set-trigger-config', async (_event: IpcMainInvokeEvent, patch: { enabled?: boolean; port?: number }) => {
+    const settings = appSettingsStore.readAppSettings();
+    const port = Number.isFinite(patch.port) ? Math.min(65535, Math.max(1024, Math.round(patch.port as number))) : settings.trigger.port;
+    const trigger: TriggerConfig = { ...settings.trigger, port, enabled: Boolean(patch.enabled ?? settings.trigger.enabled) };
+    appSettingsStore.writeAppSettings({ ...settings, trigger });
+    if (trigger.enabled) startTriggerServer(trigger.port);
+    else stopTriggerServer();
+    return { ...trigger, running: isTriggerServerRunning() };
+  });
+
+  ipcMain.handle('regenerate-trigger-token', async () => {
+    const settings = appSettingsStore.readAppSettings();
+    const trigger: TriggerConfig = { ...settings.trigger, token: crypto.randomBytes(24).toString('hex') };
+    appSettingsStore.writeAppSettings({ ...settings, trigger });
+    // A live server reads the token fresh from disk on every request (see
+    // triggerServer.ts's handleRequest), so no restart is needed here.
+    return { ...trigger, running: isTriggerServerRunning() };
   });
 
   ipcMain.on('hide-window', () => {

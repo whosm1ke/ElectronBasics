@@ -31,6 +31,20 @@ export function openPipelineEditor(pipeline: Pipeline | null): void {
   useStore.setState({ open: true, view: 'editor', editingId: pipeline ? pipeline.id : null });
 }
 
+/**
+ * Opens straight to the editor for a pipeline id without requiring the
+ * caller to already hold a fresh `pipelines` list — unlike
+ * `openPipelineEditor` above (which trusts the store's current list, fine
+ * when called from within the Pipelines screen itself), this re-fetches
+ * first. Needed by DetailsModal.tsx's "used in pipeline" links: the
+ * Pipelines screen may never have been opened yet this session, so the
+ * store's `pipelines` could still be the empty initial array.
+ */
+export async function openPipelineEditorById(pipelineId: string): Promise<void> {
+  const pipelines = await window.electronAPI.getPipelines();
+  useStore.setState({ open: true, view: 'editor', editingId: pipelineId, pipelines });
+}
+
 export function showPipelinesListView(): void {
   useStore.setState({ view: 'list', editingId: null });
 }

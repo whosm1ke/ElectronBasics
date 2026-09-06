@@ -79,7 +79,14 @@ export function HistoryDrawer() {
   if (!open) return null;
 
   const q = query.trim().toLowerCase();
-  const visible = q ? entries.filter((e) => `${e.snippetName || ''} ${e.command || ''}`.toLowerCase().includes(q)) : entries;
+  // Matches name/command AND the captured stdout/stderr preview, so e.g.
+  // searching an error message or a hostname that appeared in output finds
+  // the run even when the snippet's own name/command text doesn't mention it.
+  const visible = q
+    ? entries.filter((e) =>
+        `${e.snippetName || ''} ${e.command || ''} ${e.stdoutPreview || ''} ${e.stderrPreview || ''}`.toLowerCase().includes(q),
+      )
+    : entries;
 
   return (
     <div className="drawer-overlay" onClick={(e) => { if (e.target === e.currentTarget) closeHistory(); }}>

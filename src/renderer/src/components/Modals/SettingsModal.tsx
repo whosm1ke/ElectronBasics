@@ -6,6 +6,8 @@
 // is local component state, refreshed each time the modal opens, same as
 // the original's openSettings().
 import { useEffect, useRef, useState } from 'react';
+import { Copy, Check, RefreshCw, Trash2, BookMarked } from 'lucide-react';
+import type { TriggerConfig, Library } from '@shared/types';
 import { useUiStore, type Theme, type Density } from '../../store/useUiStore';
 import { useSettingsStore, closeSettings } from '../../store/useSettingsStore';
 import { playTone } from '../../lib/appearance';
@@ -13,6 +15,7 @@ import { showToast } from '../../lib/toast';
 import { state } from '../../../modules/state';
 import { emitSnippetsChanged } from '../../lib/events';
 import { openVariables } from '../../store/useVariablesStore';
+import { timeAgo } from '../../lib/utils';
 
 const ACCENT_PRESETS = ['#6e8bff', '#8a63f2', '#ff6bcb', '#ff6b6b', '#f5a623', '#e0c341', '#4bd08b', '#3fc7c7'];
 
@@ -276,6 +279,231 @@ function UpdatesSection() {
   );
 }
 
+function TriggersSection() {
+  const [config, setConfig] = useState<(TriggerConfig & { running: boolean }) | null>(null);
+  const [portInput, setPortInput] = useState('');
+  const [tokenCopied, setTokenCopied] = useState(false);
+  const [urlCopied, setUrlCopied] = useState(false);
+
+  useEffect(() => {
+    window.electronAPI.getTriggerConfig().then((c) => { setConfig(c); setPortInput(String(c.port)); });
+  }, []);
+
+  if (!config) return null;
+
+  async function toggle(enabled: boolean) {
+    const next = await window.electronAPI.setTriggerConfig({ enabled });
+    setConfig(next);
+    showToast(enabled ? `Trigger server listening on 127.0.0.1:${next.port}` : 'Trigger server stopped');
+  }
+
+  async function savePort() {
+    const port = Number(portInput);
+    if (!Number.isFinite(port) || port < 1024 || port > 65535) {
+      showToast('Port must be between 1024 and 65535', 'error');
+      return;
+    }
+    const next = await window.electronAPI.setTriggerConfig({ port });
+    setConfig(next);
+    setPortInput(String(next.port));
+    if (next.enabled) showToast(`Trigger server now on 127.0.0.1:${next.port}`);
+  }
+
+  const exampleUrl = `http://127.0.0.1:${config.port}/run/<snippetId>?token=${config.token}`;
+
+  return (
+    <div className="settings-section">
+      <div className="settings-section-title">Triggers</div>
+      <p className="field-hint">
+        Run a snippet from outside the launcher — a scheduled task, a CI job, another script on this machine — with a local HTTP call.
+        Loopback-only (never reachable over the network); the token below is required on every request.
+      </p>
+
+      <label className="checkbox-row" htmlFor="triggerEnabledToggle">
+        <input id="triggerEnabledToggle" type="checkbox" checked={config.enabled} onChange={(e) => toggle(e.target.checked)} />
+        <span>
+          Enable the trigger server{' '}
+          {config.enabled && <span className="field-hint">({config.running ? 'running' : 'failed to start — check the port'})</span>}
+        </span>
+      </label>
+
+      <label className="field-label" htmlFor="triggerPortInput">Port</label>
+      <div className="hotkey-row">
+        <input
+          id="triggerPortInput"
+          type="number"
+          className="field-input hotkey-input"
+          min={1024}
+          max={65535}
+          value={portInput}
+          onChange={(e) => setPortInput(e.target.value)}
+        />
+        <button type="button" className="btn btn-small" onClick={savePort}>
+          Save
+        </button>
+      </div>
+
+      <label className="field-label">Token</label>
+      <div className="hotkey-row">
+        <input type="text" className="field-input hotkey-input" readOnly value={config.token} />
+        <button
+          type="button"
+          className="btn btn-small"
+          title="Copy token"
+          onClick={async () => {
+            await window.electronAPI.copyText(config.token);
+            setTokenCopied(true);
+            setTimeout(() => setTokenCopied(false), 1200);
+          }}
+        >
+          {tokenCopied ? <Check size={13} /> : <Copy size={13} />}
+        </button>
+        <button
+          type="button"
+          className="btn btn-small"
+          title="Generate a new token (invalidates the old one immediately)"
+          onClick={async () => {
+            const next = await window.electronAPI.regenerateTriggerToken();
+            setConfig(next);
+            showToast('New trigger token generated — update anything using the old one');
+          }}
+        >
+          <RefreshCw size={13} />
+        </button>
+      </div>
+
+      <label className="field-label">Example</label>
+      <div className="hotkey-row">
+        <input type="text" className="field-input hotkey-input" readOnly value={exampleUrl} />
+        <button
+          type="button"
+          className="btn btn-small"
+          title="Copy example URL"
+          onClick={async () => {
+            await window.electronAPI.copyText(exampleUrl);
+            setUrlCopied(true);
+            setTimeout(() => setUrlCopied(false), 1200);
+          }}
+        >
+          {urlCopied ? <Check size={13} /> : <Copy size={13} />}
+        </button>
+      </div>
+      <p className="field-hint">
+        <code>POST</code> that URL (or set the token via an <code>X-Trigger-Token</code> header instead of the query string) with a real
+        snippet id in place of <code>&lt;snippetId&gt;</code> — copy a snippet's id from its Details panel. A snippet with unresolved{' '}
+        <code>{'{{placeholder}}'}</code> tokens is refused, same as scheduled/batch runs.
+      </p>
+    </div>
+  );
+}
+
+function LibraryRow({ library, onChanged }: { library: Library; onChanged: (result: { snippets?: import('@shared/types').Snippet[]; libraries: Library[] }) => void }) {
+  const [busy, setBusy] = useState(false);
+
+  async function sync() {
+    setBusy(true);
+    const res = await window.electronAPI.syncLibrary(library.id);
+    setBusy(false);
+    if (res.ok) {
+      showToast(`Synced "${library.name || library.url}" — ${res.count} snippet(s)`);
+      onChanged(res);
+    } else {
+      showToast(res.error, 'error');
+    }
+  }
+
+  async function remove() {
+    setBusy(true);
+    const res = await window.electronAPI.removeLibrary(library.id);
+    setBusy(false);
+    showToast(`Removed "${library.name || library.url}" and its snippets`);
+    onChanged(res);
+  }
+
+  return (
+    <div className="group-row">
+      <div className="group-row-info">
+        <div className="group-row-name">
+          <BookMarked size={13} /> {library.name || library.url}
+        </div>
+        <div className="group-row-count">
+          {library.url} · {library.lastSyncedAt ? `synced ${timeAgo(library.lastSyncedAt)} — ${library.lastSyncCount} snippet(s)` : 'never synced'}
+        </div>
+      </div>
+      <button type="button" className="btn btn-small" disabled={busy} onClick={sync}>
+        <RefreshCw size={12} />
+        <span>Sync</span>
+      </button>
+      <button type="button" className="btn btn-small btn-danger" disabled={busy} onClick={remove}>
+        <Trash2 size={12} />
+      </button>
+    </div>
+  );
+}
+
+function LibrariesSection() {
+  const [libraries, setLibraries] = useState<Library[]>([]);
+  const [url, setUrl] = useState('');
+  const [adding, setAdding] = useState(false);
+
+  useEffect(() => {
+    window.electronAPI.getLibraries().then(setLibraries);
+  }, []);
+
+  function applyChange(result: { snippets?: import('@shared/types').Snippet[]; libraries: Library[] }) {
+    setLibraries(result.libraries);
+    if (result.snippets) {
+      state.snippets = result.snippets;
+      emitSnippetsChanged();
+    }
+  }
+
+  async function add() {
+    if (!url.trim()) return;
+    setAdding(true);
+    const res = await window.electronAPI.addLibrary(url.trim());
+    setAdding(false);
+    if (res.ok) {
+      showToast(`Subscribed — pulled in ${res.count} snippet(s)`);
+      setUrl('');
+      applyChange(res);
+    } else {
+      showToast(res.error, 'error');
+    }
+  }
+
+  return (
+    <div className="settings-section">
+      <div className="settings-section-title">Shared libraries</div>
+      <p className="field-hint">
+        Subscribe to a URL that serves a JSON array of snippets (the same shape as an exported snippets file) — its snippets are merged in
+        read-mostly, tagged with where they came from, and refreshed on demand. Removing a subscription removes the snippets it added, too.
+      </p>
+      <div className="hotkey-row">
+        <input
+          type="text"
+          className="field-input hotkey-input"
+          placeholder="https://example.com/team-snippets.json"
+          autoComplete="off"
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') add(); }}
+        />
+        <button type="button" className="btn btn-small" disabled={adding} onClick={add}>
+          Subscribe
+        </button>
+      </div>
+      {libraries.length > 0 && (
+        <div className="groups-list" style={{ marginTop: 10 }}>
+          {libraries.map((l) => (
+            <LibraryRow key={l.id} library={l} onChanged={applyChange} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function DataSection() {
   const [launchOnStartup, setLaunchOnStartup] = useState(false);
 
@@ -350,6 +578,8 @@ export function SettingsModal() {
         <AppearanceSection />
         <BehaviorSection />
         <UpdatesSection />
+        <TriggersSection />
+        <LibrariesSection />
         <DataSection />
         <p className="field-hint" style={{ marginTop: 14 }}>
           Toggle the launcher anytime from the tray icon, or with the hotkey above.

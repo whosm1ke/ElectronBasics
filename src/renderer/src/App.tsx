@@ -15,6 +15,9 @@ import { GroupsModal } from './components/Modals/GroupsModal';
 import { SettingsModal } from './components/Modals/SettingsModal';
 import { BatchModal } from './components/Modals/BatchModal';
 import { PipelinesModal } from './components/Modals/PipelinesModal';
+import { HealthModal } from './components/Modals/HealthModal';
+import { ScheduleModal } from './components/Modals/ScheduleModal';
+import { TerminalHistoryModal } from './components/Modals/TerminalHistoryModal';
 
 export function App() {
   return (
@@ -35,6 +38,8 @@ export function App() {
       <SettingsModal />
       <BatchModal />
       <PipelinesModal />
-    </>
+      <HealthModal />
+      <ScheduleModal />
+      <TerminalHistoryModal /></>
   );
 }

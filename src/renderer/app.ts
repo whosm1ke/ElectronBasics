@@ -12,6 +12,9 @@ import { openModal } from './src/store/useEditorStore';
 import { openGroups } from './src/store/useGroupsStore';
 import { openSettings } from './src/store/useSettingsStore';
 import { openPipelines } from './src/store/usePipelinesStore';
+import { openHealth } from './src/store/useHealthStore';
+import { openScheduleOverview } from './src/store/useScheduleStore';
+import { openTerminalHistory } from './src/store/useTerminalHistoryStore';
 import { showToast } from './src/lib/toast';
 import { emitGroupsChanged } from './src/lib/events';
 import { bootstrapRunningProcesses } from './src/lib/processEngine';
@@ -43,6 +46,9 @@ dom.addBtn.addEventListener('click', () => openModal(null));
 dom.groupsBtn.addEventListener('click', openGroups);
 dom.settingsBtn.addEventListener('click', openSettings);
 dom.pipelinesBtn.addEventListener('click', openPipelines);
+dom.healthBtn.addEventListener('click', openHealth);
+dom.scheduleBtn.addEventListener('click', openScheduleOverview);
+dom.terminalHistoryBtn.addEventListener('click', openTerminalHistory);
 
 dom.groupViewBtn.addEventListener('click', () => {
   state.groupView = !state.groupView;

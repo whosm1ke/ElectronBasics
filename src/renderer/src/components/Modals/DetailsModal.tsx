@@ -1,17 +1,20 @@
-// DetailsModal.tsx — a read-only "Details" panel per snippet: shell/cwd/
-// elevation, its Run after/Run before dependencies (in both directions),
-// schedule, assertions, and usage stats. Ported from modules/details-modal.js.
-// Still calls straight into editor-modal.js/groups-modal.js (not yet
-// ported) for the dependency/group links — same as Card.tsx does for its
-// own not-yet-ported neighbors.
-import type { ReactNode } from 'react';
-import { Layers } from 'lucide-react';
-import type { Snippet, Group } from '@shared/types';
+// DetailsModal.tsx — a read-only "Details"/impact panel per snippet:
+// shell/cwd/elevation, its Run after/Run before dependencies (in both
+// directions), which groups AND pipelines reference it, schedule,
+// assertions, and usage stats — the one place that answers "what breaks if
+// I delete or rename this?" before you actually do it. Ported from
+// modules/details-modal.js. Still calls straight into
+// editor-modal.js/groups-modal.js (not yet ported) for the dependency/group
+// links — same as Card.tsx does for its own not-yet-ported neighbors.
+import { useEffect, useState, type ReactNode } from 'react';
+import { Layers, Waypoints } from 'lucide-react';
+import type { Snippet, Group, Pipeline } from '@shared/types';
 import { snippetIcon, SHELL_LABELS, timeAgo } from '../../lib/utils';
 import { useDetailsStore, closeDetails, hideDetailsForNavigation } from '../../store/useDetailsStore';
 import { state } from '../../../modules/state';
 import { openModal } from '../../store/useEditorStore';
 import { groupsForSnippet, openGroupEditor } from '../../store/useGroupsStore';
+import { openPipelineEditorById } from '../../store/usePipelinesStore';
 
 function Row({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -53,8 +56,36 @@ function GroupLink({ group }: { group: Group }) {
   );
 }
 
+function PipelineLink({ pipeline }: { pipeline: Pipeline }) {
+  return (
+    <button
+      type="button"
+      className="details-link-btn"
+      title={pipeline.description || undefined}
+      onClick={() => {
+        hideDetailsForNavigation(null);
+        openPipelineEditorById(pipeline.id);
+      }}
+    >
+      <Waypoints size={12} /> {pipeline.name || '(untitled pipeline)'}
+    </button>
+  );
+}
+
 export function DetailsModal() {
   const { snippet } = useDetailsStore();
+  // Fetched fresh each time Details opens for a snippet rather than kept on
+  // the shared state.ts object — pipelines aren't preloaded at app boot the
+  // way groups are (nothing else needs them that early), so this is the one
+  // place that needs them and the cheapest way to get a current list.
+  const [pipelines, setPipelines] = useState<Pipeline[]>([]);
+  useEffect(() => {
+    if (!snippet) return;
+    let cancelled = false;
+    window.electronAPI.getPipelines().then((p) => { if (!cancelled) setPipelines(p); });
+    return () => { cancelled = true; };
+  }, [snippet]);
+
   if (!snippet) return null;
 
   const snippets = state.snippets as Snippet[];
@@ -63,6 +94,7 @@ export function DetailsModal() {
   const runsAfterThis = snippets.filter((s) => s.runAfterThis === snippet.id);
   const runsBeforeThis = snippets.filter((s) => s.runBefore === snippet.id);
   const memberGroups: Group[] = groupsForSnippet(snippet.id);
+  const memberPipelines: Pipeline[] = pipelines.filter((p) => p.nodes.some((n) => n.snippetId === snippet.id));
   const noLinks = !before && !after && runsAfterThis.length === 0 && runsBeforeThis.length === 0;
 
   return (
@@ -138,10 +170,31 @@ export function DetailsModal() {
             </>
           )}
 
+          {memberPipelines.length > 0 && (
+            <>
+              <div className="details-section-heading">Pipelines</div>
+              <Row label="Used in">
+                {memberPipelines.map((p) => (
+                  <PipelineLink key={p.id} pipeline={p} />
+                ))}
+              </Row>
+            </>
+          )}
+
           <div className="details-section-heading">Stats</div>
           <Row label="Pinned">{snippet.pinned ? 'Yes' : 'No'}</Row>
           <Row label="Run count">{String(snippet.runCount || 0)}</Row>
           {snippet.lastRunAt && <Row label="Last run">{timeAgo(snippet.lastRunAt)}</Row>}
+          <Row label="Snippet ID">
+            <button
+              type="button"
+              className="details-link-btn"
+              title="Copy — needed for an external trigger URL (Settings → Triggers)"
+              onClick={() => window.electronAPI.copyText(snippet.id)}
+            >
+              {snippet.id}
+            </button>
+          </Row>
         </div>
         <div className="modal-actions">
           <button type="button" className="btn btn-primary" onClick={closeDetails}>

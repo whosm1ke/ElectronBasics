@@ -21,7 +21,16 @@ export const VariableSchema = z
     return {
       id: String(v.id ?? newId('var')),
       name: String(v.name ?? '').trim().slice(0, 100),
-      value: String(v.value ?? '').slice(0, 2000),
+      // A secret's on-disk value is safeStorage-encrypted (storage/variables.ts)
+      // — base64 + AES-GCM overhead inflates a 2000-char plaintext to
+      // meaningfully more bytes, so an "enc:"-prefixed value gets a looser cap
+      // here rather than being truncated (which would corrupt the ciphertext).
+      // The 2000-char cap still applies to the plaintext itself, before it's
+      // ever encrypted.
+      value: (() => {
+        const raw = String(v.value ?? '');
+        return raw.startsWith('enc:') ? raw.slice(0, 4000) : raw.slice(0, 2000);
+      })(),
       secret: Boolean(v.secret),
     };
   })

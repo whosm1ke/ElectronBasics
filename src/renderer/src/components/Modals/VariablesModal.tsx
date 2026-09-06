@@ -47,7 +47,7 @@ function VariableRow({ variable, index }: { variable: Variable; index: number })
       <button
         type="button"
         className={'variable-secret-btn' + (variable.secret ? ' active' : '')}
-        title="Hide value in the UI (stored locally, not encrypted)"
+        title="Hide value in the UI and encrypt it at rest (Windows DPAPI, tied to this device/account)"
         onClick={async () => {
           (state.variables as Variable[])[index].secret = !variable.secret;
           await persistVariables();

@@ -9,6 +9,7 @@ import { createTray, maybeShowTrayHint } from './tray';
 import { registerHotkey } from './hotkey';
 import { registerIpcHandlers } from './ipc';
 import { startScheduler } from './scheduler';
+import { initTriggerServer, stopTriggerServer } from './triggerServer';
 import { initUpdater } from './updater';
 import * as processManager from './shell/process-manager';
 import { ensureSnippetsFile } from './storage/snippets';
@@ -63,6 +64,7 @@ app.whenReady().then(() => {
 
   maybeShowTrayHint(appSettings, registeredHotkey);
   startScheduler();
+  initTriggerServer();
   initUpdater();
 
   app.on('activate', () => {
@@ -91,6 +93,7 @@ app.on('before-quit', (event) => {
   app.isQuitting = true;
   if (quitConfirmed) return;
   event.preventDefault();
+  stopTriggerServer();
   processManager.stopAll().finally(() => {
     quitConfirmed = true;
     app.quit();

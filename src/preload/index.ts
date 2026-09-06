@@ -70,8 +70,35 @@ const electronAPI = {
   /** Persists the full pipelines list. */
   savePipelines: (pipelines) => ipcRenderer.invoke('save-pipelines', pipelines),
 
+  /** Loads the subscribed external snippet libraries (URL + last-sync info, not their snippets). */
+  getLibraries: () => ipcRenderer.invoke('get-libraries'),
+
+  /** Subscribes to a new library URL and syncs it immediately. */
+  addLibrary: (url) => ipcRenderer.invoke('add-library', url),
+
+  /** Re-fetches an already-subscribed library and re-merges its snippets. */
+  syncLibrary: (libraryId) => ipcRenderer.invoke('sync-library', libraryId),
+
+  /** Unsubscribes from a library and removes every snippet it previously synced in. */
+  removeLibrary: (libraryId) => ipcRenderer.invoke('remove-library', libraryId),
+
+  /** Reads whatever real shell history already exists on this machine (PowerShell's PSReadLine log, Git Bash's .bash_history) for the "Import from terminal history" screen. */
+  getShellHistory: () => ipcRenderer.invoke('get-shell-history'),
+
   /** Opens a filesystem path in the OS file explorer. */
   openPath: (targetPath) => ipcRenderer.invoke('open-path', targetPath),
+
+  /** Checks whether a filesystem path exists — used by the Health panel to flag a snippet's missing working directory. */
+  pathExists: (targetPath) => ipcRenderer.invoke('path-exists', targetPath),
+
+  /** Reads the external HTTP trigger's config (enabled/port/token) plus whether the server is actually listening right now. */
+  getTriggerConfig: () => ipcRenderer.invoke('get-trigger-config'),
+
+  /** Enables/disables the trigger server and/or changes its port — starts/stops it immediately. */
+  setTriggerConfig: (patch) => ipcRenderer.invoke('set-trigger-config', patch),
+
+  /** Issues a fresh trigger token, invalidating the previous one immediately (a live server re-reads it per-request). */
+  regenerateTriggerToken: () => ipcRenderer.invoke('regenerate-trigger-token'),
 
   /** Hides the launcher window (does not quit the app). */
   hideWindow: () => ipcRenderer.send('hide-window'),

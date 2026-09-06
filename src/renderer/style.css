@@ -599,6 +599,13 @@ body {
   flex-shrink: 0;
 }
 
+.library-badge {
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+}
+
 .card-meta {
   font-size: 11px;
   color: var(--text-tertiary);
@@ -2345,6 +2352,109 @@ select.field-input {
   padding-top: 2px;
 }
 
+/* ---------- Health screen (HealthModal.tsx) ---------- */
+
+.health-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.health-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+}
+
+.health-row-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+}
+
+.health-row-icon {
+  font-size: 16px;
+  line-height: 1;
+  margin-top: 1px;
+}
+
+.health-row-body {
+  min-width: 0;
+}
+
+.health-row-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.health-row-issues {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 5px;
+}
+
+.health-issue-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--danger-hover);
+  background: var(--danger-soft);
+  border-radius: 999px;
+  padding: 3px 8px 3px 7px;
+}
+
+.health-row-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.health-all-clear {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  color: var(--success);
+  padding: 48px 0;
+  text-align: center;
+}
+
+.health-all-clear p {
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.spin {
+  animation: health-spin 0.8s linear infinite;
+}
+
+/* ---------- Schedule overview (ScheduleModal.tsx) — reuses .health-row/.health-issue-badge but neutral, not red, since these aren't problems ---------- */
+
+.schedule-overview-badge {
+  color: var(--text-secondary);
+  background: var(--surface-hover);
+}
+
+.schedule-overview-next {
+  font-weight: 600;
+  color: var(--accent-hover);
+  background: var(--accent-soft);
+}
+
+@keyframes health-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
 /* ---------- Groups manager (PipelinesModal.tsx's list view still uses this row look) ---------- */
 
 .groups-list {
@@ -2448,6 +2558,11 @@ select.field-input {
   flex: 1;
   min-width: 0;
   font-family: "Cascadia Code", "Consolas", "Courier New", monospace;
+}
+
+.terminal-history-line {
+  font-family: "Cascadia Code", "Consolas", "Courier New", monospace;
+  font-size: 12px;
 }
 
 .variable-secret-btn,
@@ -2688,14 +2803,81 @@ select.field-input {
   margin: 4px 2px;
 }
 
-.pipeline-add-step-menu {
-  max-height: 260px;
+/* The snippet picker (PipelinesModal.tsx's SnippetPickerMenu — "+ Add step",
+   "Change step…", "Connect to…"): a search box + optional tag-chip row,
+   both fixed, above a separately-scrolling item list — only .pipeline-picker-list
+   scrolls, so the search/filter controls stay put while you scroll results. */
+.pipeline-picker-menu {
+  display: flex;
+  flex-direction: column;
+  min-width: 230px;
+  max-width: 300px;
+}
+
+.pipeline-picker-search {
+  margin-bottom: 6px;
+  font-size: 12.5px;
+  padding: 7px 9px;
+}
+
+.pipeline-picker-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  max-height: 60px;
+  overflow-y: auto;
+  margin-bottom: 6px;
+  padding-bottom: 2px;
+}
+
+.pipeline-picker-tag-chip {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 9px;
+  border-radius: 999px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.pipeline-picker-tag-chip:hover {
+  border-color: var(--border-strong);
+  color: var(--text-primary);
+}
+
+.pipeline-picker-tag-chip.active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent-hover);
+}
+
+.pipeline-picker-list {
+  max-height: 240px;
   overflow-y: auto;
   scrollbar-width: none;
 }
 
-.pipeline-add-step-menu::-webkit-scrollbar {
+.pipeline-picker-list::-webkit-scrollbar {
   display: none;
+}
+
+.pipeline-picker-item-tag {
+  margin-left: auto;
+  padding-left: 10px;
+  font-size: 10.5px;
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+}
+
+.pipeline-picker-empty {
+  color: var(--text-tertiary);
+  cursor: default;
+}
+
+.pipeline-picker-empty:hover {
+  background: none;
 }
 
 /* ---------- Folder-open / terminal buttons ---------- */

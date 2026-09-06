@@ -13,7 +13,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Lock, Clock, SquareTerminal, Layers, Folder, Info, Star, Play, RotateCcw, Check, Copy, ChevronDown, Pencil, CopyPlus, Trash2, X } from 'lucide-react';
+import { Lock, Clock, SquareTerminal, Layers, Folder, Info, Star, Play, RotateCcw, Check, Copy, ChevronDown, Pencil, CopyPlus, Trash2, X, BookMarked } from 'lucide-react';
 import type { Snippet, Group } from '@shared/types';
 import { tagIcon, snippetIcon, tagColors, buildCardMetaText, extractPlaceholders, substituteAll, runnableTextOf } from '../../lib/utils';
 import { showToast } from '../../lib/toast';
@@ -204,6 +204,11 @@ export function Card({ snippet, index, reorderable, selected, selectMode, select
                 }
               >
                 <SquareTerminal size={12} />
+              </span>
+            )}
+            {snippet.externalSource && (
+              <span className="library-badge" title={`From a subscribed library: ${snippet.externalSource}`}>
+                <BookMarked size={12} />
               </span>
             )}
             {memberGroups.length > 0 && (

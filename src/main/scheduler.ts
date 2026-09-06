@@ -2,15 +2,10 @@
 // schedule (interval / daily / cron). There is no "skip if dangerous" check
 // here — a scheduled command runs exactly like a manually-run one; the user
 // who enabled the schedule is trusted to know what they turned on.
-import { Notification } from 'electron';
 import { Cron } from 'croner';
 import { readSnippets, writeSnippets } from './storage/snippets';
-import { appendHistory } from './storage/history';
-import { runShellCommand } from './shell/exec';
-import { envListToObject } from './env-utils';
-import { newId } from '@shared/id';
-import { showWindow, getMainWindow } from './window';
-import type { Snippet, ScheduleConfig } from '@shared/types';
+import { runUnattended } from './unattendedRun';
+import type { ScheduleConfig } from '@shared/types';
 
 const SCHEDULE_CHECK_INTERVAL_MS = 30 * 1000;
 
@@ -55,64 +50,6 @@ export function isScheduleDue(schedule: ScheduleConfig | null, now: Date): boole
   return false;
 }
 
-function runnableTextOfSnippet(s: Snippet): string {
-  return s.steps && s.steps.length ? s.steps.join('\n') : s.command;
-}
-
-async function runScheduledSnippet(snippet: Snippet): Promise<void> {
-  const startedAt = Date.now();
-  const env = envListToObject(snippet.env);
-  let result: { code: number; stdout: string; stderr: string };
-  if (snippet.steps && snippet.steps.length) {
-    const results = [];
-    for (const step of snippet.steps) {
-      // eslint-disable-next-line no-await-in-loop
-      const stepResult = await runShellCommand(step, { cwd: snippet.cwd, shell: snippet.shell, env });
-      results.push(stepResult);
-      if (snippet.stopOnStepError && stepResult.code !== 0) break;
-    }
-    result = {
-      code: results.every((r) => r.code === 0) ? 0 : 1,
-      stdout: results.map((r, i) => `--- step ${i + 1} ---\n${r.stdout}`).join('\n'),
-      stderr: results.map((r) => r.stderr).filter(Boolean).join('\n'),
-    };
-  } else {
-    result = await runShellCommand(snippet.command, { cwd: snippet.cwd, shell: snippet.shell, env });
-  }
-
-  appendHistory({
-    id: newId('run'),
-    snippetId: snippet.id,
-    snippetName: `${snippet.name} (scheduled)`,
-    command: runnableTextOfSnippet(snippet),
-    exitCode: result.code,
-    startedAt: new Date(startedAt).toISOString(),
-    durationMs: Date.now() - startedAt,
-    stdoutPreview: result.stdout.slice(0, 4000),
-    stderrPreview: result.stderr.slice(0, 2000),
-  });
-
-  try {
-    if (Notification.isSupported()) {
-      const notif = new Notification({
-        title: `Scheduled: ${snippet.name}`,
-        body: result.code === 0 ? 'Completed successfully.' : `Failed (exit code ${result.code}).`,
-      });
-      // Clicking a background notification should actually take you
-      // somewhere — bring the launcher forward and ask it to open the run
-      // history, so a failed scheduled run isn't a dead-end notification.
-      notif.on('click', () => {
-        showWindow();
-        const win = getMainWindow();
-        if (win) win.webContents.send('open-history-request');
-      });
-      notif.show();
-    }
-  } catch (err) {
-    console.error('Failed to show scheduled-run notification:', err);
-  }
-}
-
 export async function tickScheduler(): Promise<void> {
   try {
     const snippets = readSnippets();
@@ -122,7 +59,7 @@ export async function tickScheduler(): Promise<void> {
       if (!snippet.schedule || !snippet.schedule.enabled) continue;
       if (!isScheduleDue(snippet.schedule, now)) continue;
       // eslint-disable-next-line no-await-in-loop
-      await runScheduledSnippet(snippet);
+      await runUnattended(snippet, 'scheduled');
       snippet.schedule.lastRunAt = new Date().toISOString();
       snippet.lastRunAt = snippet.schedule.lastRunAt;
       snippet.runCount = (snippet.runCount || 0) + 1;

@@ -35,7 +35,7 @@ import { state } from '../../../modules/state';
 import { persistSnippets } from '../../lib/snippetsStore';
 import { runPipelineGraph } from '../../lib/pipelineEngine';
 
-/** Every saved snippet, formatted for the shared picker menu — used by both "+ Add step" and "Change step…", which both pick a snippet the same way. */
+/** Every saved snippet, formatted for the shared picker menu — used by both "+ Add step" and "Change step…", which both pick a snippet the same way. `tag`/`filterText` back that menu's own search box and category chips (see SnippetPickerMenu below). */
 function snippetPickerItems(): PickerItem[] {
   return (state.snippets as Snippet[]).map((s) => ({
     id: s.id,
@@ -44,6 +44,8 @@ function snippetPickerItems(): PickerItem[] {
         {snippetIcon(s)} {s.name}
       </>
     ),
+    tag: s.tag,
+    filterText: `${s.name} ${s.tag} ${s.command}`.toLowerCase(),
   }));
 }
 
@@ -117,6 +119,10 @@ function ListView() {
 interface PickerItem {
   id: string;
   label: ReactNode;
+  /** The item's category/tag, when it has one — drives the filter-chip row below. Omitted for "Connect to…"'s targets (pipeline steps, not standalone snippets — a tag chip row over a handful of steps isn't worth the space). */
+  tag?: string;
+  /** Lowercased name+tag+command blob the search box matches against — same "search everything, cheaply" shape as the main list's own free-text search. */
+  filterText: string;
 }
 
 // Generic enough to back every "pick one of these" floating menu in the
@@ -134,7 +140,13 @@ interface SnippetPickerState {
 function SnippetPickerMenu({ picker, onClose }: { picker: SnippetPickerState; onClose: () => void }) {
   const menuRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
+  const [query, setQuery] = useState('');
+  const [activeTag, setActiveTag] = useState<string | null>(null);
 
+  // Reposition whenever the *content* height changes too (typing a query or
+  // picking a tag can shrink the list a lot), not just on first mount —
+  // otherwise a long "no matches" gap could open up below a short filtered
+  // list, or the menu could clip past the viewport bottom on a big one.
   useLayoutEffect(() => {
     const menu = menuRef.current;
     if (!menu) return;
@@ -143,7 +155,7 @@ function SnippetPickerMenu({ picker, onClose }: { picker: SnippetPickerState; on
       left: Math.max(6, Math.min(picker.anchor.left, window.innerWidth - mRect.width - 6)),
       top: Math.min(picker.anchor.bottom + 4, window.innerHeight - mRect.height - 6),
     });
-  }, [picker]);
+  }, [picker, query, activeTag]);
 
   useEffect(() => {
     function onDocMouseDown(e: MouseEvent) {
@@ -153,30 +165,72 @@ function SnippetPickerMenu({ picker, onClose }: { picker: SnippetPickerState; on
     return () => document.removeEventListener('mousedown', onDocMouseDown, true);
   }, [onClose]);
 
+  // Every distinct tag among this picker's own items, alphabetical — not
+  // the whole library's tag set, so "Connect to…" (whose items have no
+  // `tag` at all) simply shows no chip row.
+  const tags = Array.from(new Set(picker.items.map((i) => i.tag).filter((t): t is string => Boolean(t)))).sort((a, b) => a.localeCompare(b));
+
+  const q = query.trim().toLowerCase();
+  const visible = picker.items.filter((item) => (!activeTag || item.tag === activeTag) && (!q || item.filterText.includes(q)));
+
+  function pick(id: string) {
+    picker.onPick(id);
+    onClose();
+  }
+
   return (
     <div
       ref={menuRef}
-      className="context-menu pipeline-add-step-menu"
+      className="context-menu pipeline-picker-menu"
       id="pipelineSnippetPickerMenu"
       style={pos ? { left: pos.left, top: pos.top, visibility: 'visible' } : { visibility: 'hidden' }}
+      onKeyDown={(e) => {
+        if (e.key === 'Escape') { onClose(); return; }
+        if (e.key === 'Enter' && visible.length > 0) { e.preventDefault(); pick(visible[0].id); }
+      }}
     >
-      {picker.items.length === 0 ? (
-        <div className="context-menu-item">{picker.emptyLabel}</div>
-      ) : (
-        picker.items.map((item) => (
-          <button
-            type="button"
-            key={item.id}
-            className="context-menu-item"
-            onClick={() => {
-              picker.onPick(item.id);
-              onClose();
-            }}
-          >
-            <span>{item.label}</span>
-          </button>
-        ))
+      {picker.items.length > 0 && (
+        <input
+          type="text"
+          className="field-input pipeline-picker-search"
+          placeholder="Search by name, tag, or command…"
+          autoComplete="off"
+          autoFocus
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
       )}
+      {tags.length > 1 && (
+        <div className="pipeline-picker-tags no-scrollbar">
+          <button type="button" className={'pipeline-picker-tag-chip' + (activeTag === null ? ' active' : '')} onClick={() => setActiveTag(null)}>
+            All
+          </button>
+          {tags.map((tag) => (
+            <button
+              type="button"
+              key={tag}
+              className={'pipeline-picker-tag-chip' + (activeTag === tag ? ' active' : '')}
+              onClick={() => setActiveTag(activeTag === tag ? null : tag)}
+            >
+              {tag}
+            </button>
+          ))}
+        </div>
+      )}
+      <div className="pipeline-picker-list no-scrollbar">
+        {picker.items.length === 0 ? (
+          <div className="context-menu-item">{picker.emptyLabel}</div>
+        ) : visible.length === 0 ? (
+          <div className="context-menu-item pipeline-picker-empty">No matches</div>
+        ) : (
+          visible.map((item) => (
+            <button type="button" key={item.id} className="context-menu-item" onClick={() => pick(item.id)}>
+              <span>{item.label}</span>
+              {item.tag && <span className="pipeline-picker-item-tag">{item.tag}</span>}
+            </button>
+          ))
+        )}
+      </div>
     </div>
   );
 }
@@ -222,7 +276,11 @@ function Inspector({
       .filter((n) => n.id !== node.id)
       .map((n) => {
         const s = snippets.find((sn) => sn.id === n.snippetId);
-        return { id: n.id, label: s ? <>{snippetIcon(s)} {s.name}</> : <>⚠ (deleted snippet)</> };
+        return {
+          id: n.id,
+          label: s ? <>{snippetIcon(s)} {s.name}</> : <>⚠ (deleted snippet)</>,
+          filterText: s ? `${s.name} ${s.tag} ${s.command}`.toLowerCase() : 'deleted snippet',
+        };
       });
     return (anchor: HTMLElement) =>
       openPicker(anchor, targets, 'No other steps to connect to yet', (targetId) => {

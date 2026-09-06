@@ -18,6 +18,9 @@ import { closeSettings, isSettingsOpen } from '../store/useSettingsStore';
 import { closeVariables, isVariablesOpen } from '../store/useVariablesStore';
 import { closeGroups, isGroupsOpen } from '../store/useGroupsStore';
 import { closePipelines, isPipelinesOpen } from '../store/usePipelinesStore';
+import { closeHealth, isHealthOpen } from '../store/useHealthStore';
+import { closeScheduleOverview, isScheduleOverviewOpen } from '../store/useScheduleStore';
+import { closeTerminalHistory, isTerminalHistoryOpen } from '../store/useTerminalHistoryStore';
 import { isBatchModalOpen, closeBatchModal } from '../store/useBatchStore';
 import { isAnyContextMenuOpen, isAnyCopyDropdownOpen } from './menuState';
 import { duplicateSnippet, togglePin } from './snippetsStore';
@@ -38,7 +41,17 @@ function runCardAt(index: number): void {
 
 document.addEventListener('keydown', (e) => {
   const anySurfaceOpen =
-    isEditorOpen() || isDetailsOpen() || isHistoryOpen() || isSettingsOpen() || isVariablesOpen() || isGroupsOpen() || isPipelinesOpen() || isBatchModalOpen();
+    isEditorOpen() ||
+    isDetailsOpen() ||
+    isHistoryOpen() ||
+    isSettingsOpen() ||
+    isVariablesOpen() ||
+    isGroupsOpen() ||
+    isPipelinesOpen() ||
+    isHealthOpen() ||
+    isScheduleOverviewOpen() ||
+    isTerminalHistoryOpen() ||
+    isBatchModalOpen();
 
   if (e.key === 'Escape') {
     if (isEditorOpen()) closeModal();
@@ -47,6 +60,9 @@ document.addEventListener('keydown', (e) => {
     else if (isVariablesOpen()) closeVariables();
     else if (isGroupsOpen()) closeGroups();
     else if (isPipelinesOpen()) closePipelines();
+    else if (isHealthOpen()) closeHealth();
+    else if (isScheduleOverviewOpen()) closeScheduleOverview();
+    else if (isTerminalHistoryOpen()) closeTerminalHistory();
     else if (isHistoryOpen()) closeHistory();
     else if (isSettingsOpen()) closeSettings();
     // Radix's own DismissableLayer already closes an open context menu/
