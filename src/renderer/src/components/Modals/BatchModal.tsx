@@ -19,6 +19,7 @@ import {
 } from '@dnd-kit/core';
 import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy, useSortable, arrayMove } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import { ShieldQuestion, Check, X } from 'lucide-react';
 import type { Snippet } from '@shared/types';
 import { snippetIcon } from '../../lib/utils';
 import { showToast } from '../../lib/toast';
@@ -30,6 +31,7 @@ import {
   setBatchStopOnError,
   setBatchOrder,
   runBatchList,
+  resolveGate,
   type BatchRow,
   toggleRowBody,
 } from '../../store/useBatchStore';
@@ -124,11 +126,9 @@ function ConfigView() {
         </button>
       </div>
 
-      <label className="checkbox-row" htmlFor="batchStopOnErrorToggle">
+      <label className="checkbox-row" htmlFor="batchStopOnErrorToggle" title="Sequential mode only">
         <input type="checkbox" id="batchStopOnErrorToggle" checked={stopOnError} disabled={mode !== 'sequential'} onChange={(e) => setBatchStopOnError(e.target.checked)} />
-        <span>
-          Stop if a snippet fails <span className="field-hint">(sequential mode only)</span>
-        </span>
+        <span>Stop if a snippet fails</span>
       </label>
 
       <label className="field-label">Order</label>
@@ -169,13 +169,32 @@ function ConfigView() {
 
 function ResultRow({ row }: { row: BatchRow }) {
   const dotClass = row.status === 'running' ? 'running' : row.status === 'ok' ? 'ok' : row.status === 'error' ? 'error' : '';
+  const isPendingGate = row.status === 'gate';
   return (
     <div className="batch-result-row">
-      <div className="batch-result-header" onClick={() => toggleRowBody(row.id)}>
-        <span className={`status-dot ${dotClass}`} />
+      <div className="batch-result-header" onClick={() => !isPendingGate && toggleRowBody(row.id)}>
+        {isPendingGate ? <ShieldQuestion size={14} className="batch-gate-icon" /> : <span className={`status-dot ${dotClass}`} />}
         <span className="batch-result-name">
-          {snippetIcon(row.snippet)} {row.snippet.name}
+          {row.snippet ? (
+            <>
+              {snippetIcon(row.snippet)} {row.snippet.name}
+            </>
+          ) : (
+            row.label
+          )}
         </span>
+        {isPendingGate && (
+          <span className="batch-gate-actions" onClick={(e) => e.stopPropagation()}>
+            <button type="button" className="btn btn-small btn-primary" onClick={() => resolveGate(row.id, true)}>
+              <Check size={12} />
+              <span>Continue</span>
+            </button>
+            <button type="button" className="btn btn-small btn-danger" onClick={() => resolveGate(row.id, false)}>
+              <X size={12} />
+              <span>Abort</span>
+            </button>
+          </span>
+        )}
       </div>
       <div className="batch-result-body" hidden={!row.bodyVisible}>
         {row.output}

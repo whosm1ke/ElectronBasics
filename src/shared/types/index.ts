@@ -6,6 +6,8 @@ export * from './variable';
 export * from './group';
 export * from './pipeline';
 export * from './library';
+export * from './watchTrigger';
+export * from './paramValues';
 export * from './app-settings';
 export * from './history';
 export * from './run';

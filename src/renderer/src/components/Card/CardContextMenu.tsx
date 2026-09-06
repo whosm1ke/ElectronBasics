@@ -8,12 +8,13 @@
 // and a document-level click listener.
 import type { ReactNode, RefObject } from 'react';
 import * as ContextMenu from '@radix-ui/react-context-menu';
-import { Play, SquareTerminal, Copy, Pencil, CopyPlus, Trash2 } from 'lucide-react';
+import { Play, SquareTerminal, Copy, Pencil, CopyPlus, Trash2, Layers as LayersIcon } from 'lucide-react';
 import type { Snippet } from '@shared/types';
-import { runnableTextOf } from '../../lib/utils';
+import { runnableTextOf, extractPlaceholders } from '../../lib/utils';
 import { showToast } from '../../lib/toast';
 import { duplicateSnippet, togglePin } from '../../lib/snippetsStore';
 import { openModal } from '../../store/useEditorStore';
+import { openTemplateGenerator } from '../../store/useTemplateStore';
 import { setContextMenuOpen } from '../../lib/menuState';
 
 interface CardContextMenuProps {
@@ -67,6 +68,12 @@ export function CardContextMenu({ snippet, cardRef, onDelete, children }: CardCo
           <ContextMenu.Item className="context-menu-item" onSelect={() => togglePin(snippet.id)}>
             <span>{snippet.pinned ? 'Unpin' : 'Pin to top'}</span>
           </ContextMenu.Item>
+          {extractPlaceholders(runnableTextOf(snippet)).length > 0 && (
+            <ContextMenu.Item className="context-menu-item" onSelect={() => openTemplateGenerator(snippet)}>
+              <LayersIcon size={13} />
+              <span>Generate variants…</span>
+            </ContextMenu.Item>
+          )}
           <ContextMenu.Separator className="context-menu-sep" />
           <ContextMenu.Item className="context-menu-item danger" onSelect={onDelete}>
             <Trash2 size={13} />

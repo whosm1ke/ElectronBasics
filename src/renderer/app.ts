@@ -44,7 +44,10 @@ dom.searchInput.addEventListener('input', refresh);
 dom.historyBtn.addEventListener('click', openHistory);
 dom.addBtn.addEventListener('click', () => openModal(null));
 dom.groupsBtn.addEventListener('click', openGroups);
-dom.settingsBtn.addEventListener('click', openSettings);
+// Not `openSettings` directly — addEventListener hands its handler the
+// click MouseEvent as the first argument, which openSettings() would
+// otherwise treat as its (optional) SettingsCategory parameter.
+dom.settingsBtn.addEventListener('click', () => openSettings());
 dom.pipelinesBtn.addEventListener('click', openPipelines);
 dom.healthBtn.addEventListener('click', openHealth);
 dom.scheduleBtn.addEventListener('click', openScheduleOverview);

@@ -3,14 +3,8 @@
 // instead — a real React component, not a port of the DOM-building
 // function). Keeps a global variable's stored value fresh whenever a
 // matching placeholder is filled in during a run.
+import type { Variable } from '@shared/types';
 import { state } from '../../modules/state';
-
-interface Variable {
-  id: string;
-  name: string;
-  value: string;
-  secret: boolean;
-}
 
 export async function syncVariablesFromValues(values: Record<string, string> | null): Promise<void> {
   if (!values) return;

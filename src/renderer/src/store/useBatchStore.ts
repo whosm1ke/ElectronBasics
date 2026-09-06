@@ -11,12 +11,18 @@ import { newId, prettyMaybeJson, runnableTextOf, extractPlaceholders } from '../
 import { emitBatchModalClosed } from '../lib/events';
 import { state as legacyState } from '../../modules/state';
 
-export type RowStatus = 'pending' | 'running' | 'ok' | 'error' | 'skipped' | 'not-run';
+// 'gate' is only ever set by a pipeline's approval-gate node (pipelineEngine.ts)
+// while it's waiting on the user's Continue/Abort click — see addGateRow/
+// waitForGate/resolveGate below.
+export type RowStatus = 'pending' | 'running' | 'ok' | 'error' | 'skipped' | 'not-run' | 'gate';
 export type BatchMode = 'sequential' | 'parallel';
 
 export interface BatchRow {
   id: string;
-  snippet: Snippet;
+  // null only for a gate row — there's no snippet behind an approval gate,
+  // just `label` (below) to show in its place.
+  snippet: Snippet | null;
+  label?: string;
   status: RowStatus;
   output: string;
   bodyVisible: boolean;
@@ -92,6 +98,13 @@ export function addRow(snippet: Snippet): string {
   return id;
 }
 
+/** A row with no real snippet behind it — a pipeline's delay/sub-pipeline node, shown by its own caption instead of a snippet name. */
+export function addLabelRow(label: string): string {
+  const id = newId('row');
+  useStore.setState((s) => ({ rows: [...s.rows, { id, snippet: null, label, status: 'pending', output: '', bodyVisible: false }] }));
+  return id;
+}
+
 function updateRow(id: string, patch: Partial<BatchRow>): void {
   useStore.setState((s) => ({ rows: s.rows.map((r) => (r.id === id ? { ...r, ...patch } : r)) }));
 }
@@ -114,6 +127,28 @@ export function setRowSkipped(id: string): void {
 }
 export function setRowNotRun(id: string): void {
   updateRow(id, { status: 'not-run', output: 'Not run — an earlier snippet failed ("Stop if a snippet fails" is on).', bodyVisible: true });
+}
+
+// --- Approval-gate rows (pipeline 'gate' nodes, interactive runs only) ---
+// The pending resolver lives outside the store (a plain module-level Map,
+// not Zustand state) — it's a short-lived runtime handle for one specific
+// in-flight wait, not app state anything else needs to react to.
+const gateResolvers = new Map<string, (approved: boolean) => void>();
+
+export function addGateRow(label: string): string {
+  const id = newId('row');
+  useStore.setState((s) => ({ rows: [...s.rows, { id, snippet: null, label, status: 'gate', output: '', bodyVisible: true }] }));
+  return id;
+}
+export function waitForGate(id: string): Promise<boolean> {
+  return new Promise((resolve) => gateResolvers.set(id, resolve));
+}
+export function resolveGate(id: string, approved: boolean): void {
+  const resolve = gateResolvers.get(id);
+  if (!resolve) return;
+  gateResolvers.delete(id);
+  updateRow(id, { status: approved ? 'ok' : 'error', output: approved ? 'Approved — continuing.' : 'Aborted by user.' });
+  resolve(approved);
 }
 export function toggleRowBody(id: string): void {
   useStore.setState((s) => ({ rows: s.rows.map((r) => (r.id === id && r.output.trim() ? { ...r, bodyVisible: !r.bodyVisible } : r)) }));

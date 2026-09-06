@@ -18,6 +18,8 @@ import { PipelinesModal } from './components/Modals/PipelinesModal';
 import { HealthModal } from './components/Modals/HealthModal';
 import { ScheduleModal } from './components/Modals/ScheduleModal';
 import { TerminalHistoryModal } from './components/Modals/TerminalHistoryModal';
+import { TemplateModal } from './components/Modals/TemplateModal';
+import { CommandPaletteModal } from './components/Modals/CommandPaletteModal';
 
 export function App() {
   return (
@@ -40,6 +42,8 @@ export function App() {
       <PipelinesModal />
       <HealthModal />
       <ScheduleModal />
-      <TerminalHistoryModal /></>
+      <TerminalHistoryModal />
+      <TemplateModal />
+      <CommandPaletteModal /></>
   );
 }

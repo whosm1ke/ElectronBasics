@@ -58,6 +58,9 @@ const electronAPI = {
   /** Persists the full variables list. */
   saveVariables: (vars) => ipcRenderer.invoke('save-variables', vars),
 
+  /** Manually refreshes one computed variable right now (runs its source snippet, captures stdout) and returns the full updated list. */
+  refreshComputedVariable: (variableId) => ipcRenderer.invoke('refresh-computed-variable', variableId),
+
   /** Loads the saved snippet groups (named sets of snippet ids, run together on demand). */
   getGroups: () => ipcRenderer.invoke('get-groups'),
 
@@ -84,6 +87,15 @@ const electronAPI = {
 
   /** Reads whatever real shell history already exists on this machine (PowerShell's PSReadLine log, Git Bash's .bash_history) for the "Import from terminal history" screen. */
   getShellHistory: () => ipcRenderer.invoke('get-shell-history'),
+
+  /** Loads the saved file-watch triggers. */
+  getWatchTriggers: () => ipcRenderer.invoke('get-watch-triggers'),
+
+  /** Persists the full file-watch trigger list and immediately reconciles the live fs.watch instances against it. */
+  saveWatchTriggers: (triggers) => ipcRenderer.invoke('save-watch-triggers', triggers),
+
+  /** Opens a native file/folder picker for a watch trigger's path. */
+  pickWatchPath: () => ipcRenderer.invoke('pick-watch-path'),
 
   /** Opens a filesystem path in the OS file explorer. */
   openPath: (targetPath) => ipcRenderer.invoke('open-path', targetPath),

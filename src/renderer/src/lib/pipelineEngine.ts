@@ -1,99 +1,169 @@
-// pipelineEngine.ts — executes a saved (or in-progress-editing) pipeline:
-// walks its node graph from root nodes (no incoming edges), runs each
-// resolved snippet, and after each finishes, follows any outgoing edge
-// whose condition matches that result to reach the next node(s):
-// 'success' (exit 0) | 'failure' (non-zero exit) | 'always' | 'exitCode'
-// (exit code equals edge.value) | 'outputContains' (stdout+stderr includes
-// edge.value). OR-semantics: a node runs the first time ANY satisfied
-// incoming edge reaches it — there's no "wait for every incoming edge"
-// join, which keeps this simple and avoids deadlock/starvation questions a
-// real join would raise. Reuses useBatchStore.ts's results-modal row API
-// (addRow/setRow*/runOne) rather than building a second, near-identical
-// live-results UI — see BatchModal.tsx. Ported from modules/pipeline-engine.js.
-import type { PipelineNode, PipelineEdge, RunResult, Snippet } from '@shared/types';
-import { extractPlaceholders, runnableTextOf } from './utils';
+// pipelineEngine.ts — the renderer's INTERACTIVE pipeline runner: drives
+// @shared/pipelineWalk.ts's pure graph-walking core with a `runNode`
+// callback that actually executes each kind of node — a 'step' via IPC +
+// a live useBatchStore row (same one batch/group runs use), 'delay' via a
+// plain wait, 'gate' via a row with real Continue/Abort buttons the user
+// clicks, and 'pipeline' by recursively re-entering this same walker on
+// the referenced pipeline. main/pipelineRunner.ts is this file's
+// unattended (scheduled) twin — same shared walker, a different `runNode`
+// (no UI, no gate wait) since main can't drive React state or prompt a
+// human. Live progress is painted directly onto the already-rendered React
+// Flow DOM nodes/edges (see setNodeRunClass/setEdgeWalkedClass) rather than
+// threading a `runStatus` prop through pipelineFlow.ts/every node
+// component — the same "imperative DOM escape hatch for fast-changing live
+// status" this app already uses for background-process output
+// (processEngine.ts) and a card's own run output (runEngine.ts).
+import type { PipelineNode, PipelineEdge, Snippet, RunResult } from '@shared/types';
+import { walkPipeline, withRetries, sleep, type NodeOutcome } from '@shared/pipelineWalk';
+import { extractPlaceholders, runnableTextOf, substituteAll } from './utils';
 import { showToast } from './toast';
-import { openBatchResultsModal, resetRows, finishRun, addRow, setRowRunning, setRowDone, setRowSkipped, runOne } from '../store/useBatchStore';
+import {
+  openBatchResultsModal,
+  resetRows,
+  finishRun,
+  addRow,
+  addLabelRow,
+  addGateRow,
+  waitForGate,
+  setRowRunning,
+  setRowDone,
+  setRowSkipped,
+  runOne,
+} from '../store/useBatchStore';
 import { state } from '../../modules/state';
 
-export function edgeSatisfied(edge: PipelineEdge, result: RunResult): boolean {
-  switch (edge.condition) {
-    case 'always':
-      return true;
-    case 'failure':
-      return result.code !== 0;
-    case 'exitCode':
-      return result.code === edge.value;
-    case 'outputContains':
-      return `${result.stdout || ''}\n${result.stderr || ''}`.includes(String(edge.value || ''));
-    default:
-      return result.code === 0; // 'success'
-  }
+function nodeEl(nodeId: string): HTMLElement | null {
+  // React Flow stamps `data-id` on each node's rendered wrapper element.
+  return document.querySelector(`.react-flow__node[data-id="${nodeId}"]`);
+}
+function setNodeRunClass(nodeId: string, cls: 'pf-run-active' | 'pf-run-ok' | 'pf-run-error' | 'pf-run-skipped' | null): void {
+  const el = nodeEl(nodeId);
+  if (!el) return;
+  el.classList.remove('pf-run-active', 'pf-run-ok', 'pf-run-error', 'pf-run-skipped');
+  if (cls) el.classList.add(cls);
+}
+function markEdgeWalked(edgeId: string, satisfied: boolean): void {
+  const el = document.querySelector(`.react-flow__edge[data-id="${edgeId}"]`);
+  el?.classList.add(satisfied ? 'pf-edge-walked-yes' : 'pf-edge-walked-no');
+}
+/** Clears every leftover run-status class from a previous run before a new one starts painting fresh ones. */
+function clearRunClasses(): void {
+  document.querySelectorAll('.react-flow__node.pf-run-active, .react-flow__node.pf-run-ok, .react-flow__node.pf-run-error, .react-flow__node.pf-run-skipped')
+    .forEach((el) => el.classList.remove('pf-run-active', 'pf-run-ok', 'pf-run-error', 'pf-run-skipped'));
+  document.querySelectorAll('.react-flow__edge.pf-edge-walked-yes, .react-flow__edge.pf-edge-walked-no')
+    .forEach((el) => el.classList.remove('pf-edge-walked-yes', 'pf-edge-walked-no'));
 }
 
-interface ResolvedNode {
-  id: string;
-  snippet: Snippet;
+interface RunOptions {
+  maxConcurrency?: number;
+  /** Pipeline ids already on the current call stack — guards a 'pipeline' node against a reference cycle at RUN time too, as defense in depth alongside the save-time check (PipelinesModal.tsx's save()). */
+  visitedPipelineIds?: Set<string>;
+  /** True for a recursive sub-pipeline call — suppresses opening/resetting the shared results modal (the top-level call already owns it) and the "nothing to run" toast (the parent row already shows the sub-pipeline failed to produce anything). */
+  isSubRun?: boolean;
+  /** Values collected once up front (PipelinesModal.tsx's param-gate, via lib/utils.ts's collectPipelinePlaceholders) for every `{{placeholder}}` used anywhere in this pipeline — substituted into a 'step' node's command/steps instead of skipping it outright. A name with no matching value still skips that one step. */
+  values?: Record<string, string> | null;
 }
 
 /**
  * Runs `{nodes, edges}` (a saved pipeline, or the pipeline editor's
- * in-progress working copy — same shape either way). Resolves each node's
- * snippetId against the live state.snippets, silently dropping nodes whose
- * snippet no longer exists (same "a dangling pointer is just skipped" rule
- * groups already follow). Returns null (with a toast) if nothing's left to run.
+ * in-progress working copy — same shape either way) interactively, with
+ * live per-node rows in the shared batch-results modal. Returns null (with
+ * a toast) if there's nothing left to run.
  */
-export async function runPipelineGraph(nodes: PipelineNode[], edges: PipelineEdge[]): Promise<{ ran: number; skipped: number; total: number } | null> {
-  const resolved: ResolvedNode[] = nodes
-    .map((n) => ({ id: n.id, snippet: (state.snippets as Snippet[]).find((s) => s.id === n.snippetId) }))
-    .filter((n): n is ResolvedNode => Boolean(n.snippet));
-  if (resolved.length === 0) {
-    showToast('This pipeline has no valid steps left to run — edit it first', 'error');
+export async function runPipelineGraph(nodes: PipelineNode[], edges: PipelineEdge[], opts: RunOptions = {}): Promise<{ ran: number; skipped: number; total: number; success: boolean } | null> {
+  const snippets = state.snippets as Snippet[];
+  // A 'step' node whose snippet was deleted is dead weight — same
+  // dangling-pointer rule groups/pipelines already follow elsewhere. Every
+  // other kind is self-contained enough to at least attempt (a broken
+  // sub-pipeline reference is caught per-node, below, as a skip).
+  const usable = nodes.filter((n) => n.kind !== 'step' || snippets.some((s) => s.id === n.snippetId));
+  if (usable.length === 0) {
+    if (!opts.isSubRun) showToast('This pipeline has no valid steps left to run — edit it first', 'error');
     return null;
   }
-  const nodeById = new Map(resolved.map((n) => [n.id, n]));
-  const validEdges = edges.filter((e) => nodeById.has(e.from) && nodeById.has(e.to));
-  const hasIncoming = new Set(validEdges.map((e) => e.to));
-  const roots = resolved.filter((n) => !hasIncoming.has(n.id));
 
-  openBatchResultsModal();
-  resetRows();
+  if (!opts.isSubRun) {
+    openBatchResultsModal();
+    resetRows();
+    clearRunClasses();
+  }
 
-  const started = new Set<string>();
-  let ran = 0;
-  let skipped = 0;
+  async function runNode(node: PipelineNode): Promise<NodeOutcome> {
+    setNodeRunClass(node.id, 'pf-run-active');
+    const outcome = await runOneNode(node);
+    setNodeRunClass(node.id, outcome.kind === 'skipped' ? 'pf-run-skipped' : outcome.result.code === 0 ? 'pf-run-ok' : 'pf-run-error');
+    return outcome;
+  }
 
-  async function runNode(node: ResolvedNode): Promise<void> {
-    if (started.has(node.id)) return;
-    started.add(node.id);
-
-    const rowId = addRow(node.snippet);
-
-    if (extractPlaceholders(runnableTextOf(node.snippet)).length > 0) {
-      setRowSkipped(rowId);
-      skipped += 1;
-      return;
+  async function runOneNode(node: PipelineNode): Promise<NodeOutcome> {
+    if (node.kind === 'delay') {
+      const rowId = addLabelRow(node.label || `Waiting ${node.delaySeconds}s…`);
+      setRowRunning(rowId);
+      await sleep(node.delaySeconds * 1000);
+      const result: RunResult = { code: 0, stdout: '', stderr: '' };
+      setRowDone(rowId, result);
+      return { kind: 'ran', result };
     }
 
+    if (node.kind === 'gate') {
+      const rowId = addGateRow(node.label || 'Approval gate');
+      const approved = await waitForGate(rowId);
+      return { kind: 'ran', result: { code: approved ? 0 : 1, stdout: '', stderr: approved ? '' : 'Aborted by user.' } };
+    }
+
+    if (node.kind === 'pipeline') {
+      const allPipelines = await window.electronAPI.getPipelines();
+      const sub = allPipelines.find((p) => p.id === node.subPipelineId);
+      if (!sub) {
+        const rowId = addLabelRow(node.label || '⚠ Sub-pipeline not found');
+        setRowSkipped(rowId);
+        return { kind: 'skipped' };
+      }
+      const visited = new Set(opts.visitedPipelineIds);
+      if (visited.has(sub.id)) {
+        const rowId = addLabelRow(`⚠ "${sub.name}" — skipped (would create a cyclic reference)`);
+        setRowSkipped(rowId);
+        return { kind: 'skipped' };
+      }
+      visited.add(sub.id);
+      const rowId = addLabelRow(`▸ ${sub.name || '(untitled pipeline)'}`);
+      setRowRunning(rowId);
+      const subStats = await runPipelineGraph(sub.nodes, sub.edges, { maxConcurrency: sub.maxConcurrency, visitedPipelineIds: visited, isSubRun: true, values: opts.values });
+      const result: RunResult = { code: subStats && subStats.success ? 0 : 1, stdout: '', stderr: '' };
+      setRowDone(rowId, result);
+      return { kind: 'ran', result };
+    }
+
+    // 'step'
+    const snippet = snippets.find((s) => s.id === node.snippetId)!;
+    const rowId = addRow(snippet);
+    const placeholderNames = extractPlaceholders(runnableTextOf(snippet));
+    const hasAllValues = placeholderNames.every((n) => opts.values && n in opts.values);
+    if (placeholderNames.length > 0 && !hasAllValues) {
+      setRowSkipped(rowId);
+      return { kind: 'skipped' };
+    }
+    const runnable: Snippet = placeholderNames.length > 0
+      ? { ...snippet, command: substituteAll(snippet.command, opts.values), steps: snippet.steps ? snippet.steps.map((s) => substituteAll(s, opts.values)) : null }
+      : snippet;
     setRowRunning(rowId);
-    const result = await runOne(node.snippet);
+    const attempt = () => runOne(runnable);
+    const result = node.retries > 0 ? await withRetries(attempt, (r) => r.code === 0, node.retries, node.retryDelaySeconds) : await attempt();
     setRowDone(rowId, result);
-    ran += 1;
-    const target = (state.snippets as Snippet[]).find((s) => s.id === node.snippet.id);
+    const target = snippets.find((s) => s.id === snippet.id);
     if (target) {
       target.runCount = (target.runCount || 0) + 1;
       target.lastRunAt = new Date().toISOString();
     }
-
-    const nextNodes = validEdges
-      .filter((e) => e.from === node.id && edgeSatisfied(e, result))
-      .map((e) => nodeById.get(e.to))
-      .filter((n): n is ResolvedNode => Boolean(n));
-    await Promise.all(nextNodes.map(runNode));
+    return { kind: 'ran', result };
   }
 
-  await Promise.all(roots.map(runNode));
+  const stats = await walkPipeline(usable, edges, {
+    runNode,
+    maxConcurrency: opts.maxConcurrency,
+    onEdgeWalked: markEdgeWalked,
+  });
 
-  finishRun();
-  return { ran, skipped, total: resolved.length };
+  if (!opts.isSubRun) finishRun();
+  return stats;
 }

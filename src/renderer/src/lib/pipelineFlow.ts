@@ -7,10 +7,24 @@
 // PipelinesModal.tsx's EditorView owns (and discards on Cancel) never has
 // to know React Flow's shape at all.
 import type { Node, Edge } from '@xyflow/react';
-import type { PipelineNode, PipelineEdge, EdgeCondition } from '@shared/types';
+import type { PipelineNode, PipelineEdge, EdgeCondition, NodeKind } from '@shared/types';
 
-export type StepNodeData = { snippetId: string };
+// One data shape per node kind — only what each kind's own component
+// (PipelineStepNode.tsx and its delay/gate/sub-pipeline siblings) actually
+// needs to render. Inspector edits (retries, joinMode, …) go straight
+// through PipelinesModal's own `setNodes` on the PipelineNode[] working
+// copy, not through this round-trip, so they don't need to live in `data`.
+export type StepNodeData = { kind: 'step'; snippetId: string };
+export type DelayNodeData = { kind: 'delay'; delaySeconds: number; label: string };
+export type GateNodeData = { kind: 'gate'; label: string };
+export type SubPipelineNodeData = { kind: 'pipeline'; subPipelineId: string; label: string };
+export type PipelineFlowNodeData = StepNodeData | DelayNodeData | GateNodeData | SubPipelineNodeData;
+
 export type StepNode = Node<StepNodeData, 'step'>;
+export type DelayNode = Node<DelayNodeData, 'delay'>;
+export type GateNode = Node<GateNodeData, 'gate'>;
+export type SubPipelineFlowNode = Node<SubPipelineNodeData, 'pipeline'>;
+export type FlowNode = StepNode | DelayNode | GateNode | SubPipelineFlowNode;
 
 // onSelect/onRemove ride along on the edge's own data rather than being
 // wired up separately: PipelineConditionEdge.tsx's label renders through
@@ -26,56 +40,78 @@ export type ConditionEdgeData = {
 };
 export type ConditionEdge = Edge<ConditionEdgeData, 'condition'>;
 
-// Matches PipelineStepNode.tsx's rendered footprint closely enough for
+// Matches every node component's rendered footprint closely enough for
 // dagre's box-packing math and for centering a newly-dropped/duplicated node.
 export const NODE_WIDTH = 200;
 export const NODE_HEIGHT = 76;
+// Delay/gate nodes render noticeably shorter (one line, no avatar+meta) —
+// dagre and the initial-drop centering use this instead for those kinds.
+export const SMALL_NODE_HEIGHT = 52;
 
-export function toFlowNode(n: PipelineNode, selectedId: string | null): StepNode {
-  return {
+function heightFor(kind: NodeKind): number {
+  return kind === 'step' || kind === 'pipeline' ? NODE_HEIGHT : SMALL_NODE_HEIGHT;
+}
+
+export function toFlowNode(n: PipelineNode, selectedId: string | null): FlowNode {
+  const base = {
     id: n.id,
-    type: 'step',
     position: { x: n.x, y: n.y },
-    data: { snippetId: n.snippetId },
     selected: n.id === selectedId,
-    // Declaring a fixed size up front (matches .pipeline-step-node's own
-    // width/height exactly) lets React Flow skip its own ResizeObserver-
-    // based auto-measurement pass for this node. Without it, every render
-    // rebuilds a brand-new node object (this app keeps the working-copy
-    // PipelineNode[]/PipelineEdge[] as the single source of truth — see
-    // PipelineCanvas.tsx's header comment), which erases whatever React
-    // Flow measured last time and makes it measure again — a sustained
-    // re-render churn (confirmed via this rewrite's own testing: hundreds
-    // of renders/sec, `ResizeObserver loop completed` warnings, and mouse
-    // gestures landing on the wrong, already-replaced element) closely
-    // related to the outright "Maximum update depth exceeded" (React error
-    // #185) this rewrite hit before handleSelectionChange/
-    // handleNodeContextMenu in PipelineCanvas.tsx were memoized.
+    // Declaring a fixed size up front lets React Flow skip its own
+    // ResizeObserver-based auto-measurement pass for this node — see
+    // `measured`'s own comment below for why that matters. Must match
+    // .pipeline-step-node/.pipeline-mini-node's own CSS height exactly.
     width: NODE_WIDTH,
-    height: NODE_HEIGHT,
+    height: heightFor(n.kind),
     // `measured` must match width/height from the very first render, not
     // just eventually: React Flow diffs its OWN ResizeObserver measurement
     // against node.measured (not node.width/height) to decide whether a
     // node's size "changed". Leaving `measured` unset reads as undefined
-    // !== 200, so the very first real measurement always looks like a
+    // !== N, so the very first real measurement always looks like a
     // change, firing an onNodesChange 'dimensions' event that flows back
     // through fromFlowNode()/setNodes() as a brand-new PipelineNode[]
     // array — which rebuilds this exact node object again (fresh identity,
-    // since this app keeps recomputing flowNodes from its own state every
+        // since this app keeps recomputing flowNodes from its own state every
     // render) before React Flow's internal handleBounds measurement for it
     // can ever settle. That loop silently starved every edge's connected
-    // handles of a measured position forever (confirmed via this rewrite's
-    // own testing: sourceX/targetY stayed null, so React Flow's EdgeWrapper
-    // rendered nothing — no <path>, not even a call into the custom edge
-    // component — while the edge existed correctly in this app's own state
-    // the whole time). Declaring `measured` up front short-circuits that
-    // first "change" entirely.
-    measured: { width: NODE_WIDTH, height: NODE_HEIGHT },
+    // handles of a measured position forever. Declaring `measured` up
+    // front short-circuits that first "change" entirely.
+    measured: { width: NODE_WIDTH, height: heightFor(n.kind) },
   };
+  switch (n.kind) {
+    case 'delay':
+      return { ...base, type: 'delay', data: { kind: 'delay', delaySeconds: n.delaySeconds, label: n.label } };
+    case 'gate':
+      return { ...base, type: 'gate', data: { kind: 'gate', label: n.label } };
+    case 'pipeline':
+      return { ...base, type: 'pipeline', data: { kind: 'pipeline', subPipelineId: n.subPipelineId, label: n.label } };
+    default:
+      return { ...base, type: 'step', data: { kind: 'step', snippetId: n.snippetId } };
+  }
 }
 
-export function fromFlowNode(n: StepNode): PipelineNode {
-  return { id: n.id, snippetId: n.data.snippetId, x: n.position.x, y: n.position.y };
+/**
+ * Rebuilds a PipelineNode from its React Flow counterpart. `existing` (the
+ * same-id node from the current working copy, when it's still there) fills
+ * in every field this flow node's own `data` doesn't carry — retries,
+ * joinMode, etc., which the Inspector edits directly on the working copy
+ * and never routes through `data` — so a plain drag (which only changes
+ * `position`, never `data`) doesn't silently reset them to defaults.
+ */
+export function fromFlowNode(n: FlowNode, existing: PipelineNode | undefined): PipelineNode {
+  const fallback: PipelineNode = {
+    id: n.id, kind: n.data.kind, snippetId: '', subPipelineId: '', delaySeconds: 5, label: '',
+    retries: 0, retryDelaySeconds: 5, joinMode: 'any', x: n.position.x, y: n.position.y,
+  };
+  const merged = existing ? { ...existing } : fallback;
+  merged.x = n.position.x;
+  merged.y = n.position.y;
+  merged.kind = n.data.kind;
+  if (n.data.kind === 'step') merged.snippetId = n.data.snippetId;
+  else if (n.data.kind === 'delay') { merged.delaySeconds = n.data.delaySeconds; merged.label = n.data.label; }
+  else if (n.data.kind === 'gate') merged.label = n.data.label;
+  else if (n.data.kind === 'pipeline') { merged.subPipelineId = n.data.subPipelineId; merged.label = n.data.label; }
+  return merged;
 }
 
 export function toFlowEdge(e: PipelineEdge, selectedId: string | null, onSelect: () => void, onRemove: () => void): ConditionEdge {
@@ -84,12 +120,10 @@ export function toFlowEdge(e: PipelineEdge, selectedId: string | null, onSelect:
     type: 'condition',
     source: e.from,
     target: e.to,
-    // Explicit even though each step only has one of each: PipelineStepNode
-    // gives its Handles real ids ("in"/"out"), and without matching
-    // sourceHandle/targetHandle here React Flow can't always resolve which
-    // handle an edge attaches to, silently rendering nothing (confirmed via
-    // this rewrite's own testing — the edge existed in state, selectable
-    // and shown in the Inspector, but no path/line ever painted).
+    // Explicit even though each step only has one of each: every node
+    // component gives its Handles real ids ("in"/"out"), and without
+    // matching sourceHandle/targetHandle here React Flow can't always
+    // resolve which handle an edge attaches to, silently rendering nothing.
     sourceHandle: 'out',
     targetHandle: 'in',
     data: { condition: e.condition, value: e.value, onSelect, onRemove },

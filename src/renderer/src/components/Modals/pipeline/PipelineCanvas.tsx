@@ -36,11 +36,14 @@ import '@xyflow/react/dist/base.css';
 import type { PipelineNode, PipelineEdge } from '@shared/types';
 import { tryCreatePipelineEdge } from '../../../lib/utils';
 import { showToast } from '../../../lib/toast';
-import { toFlowNode, fromFlowNode, toFlowEdge, fromFlowEdge, type StepNode, type ConditionEdge } from '../../../lib/pipelineFlow';
+import { toFlowNode, fromFlowNode, toFlowEdge, fromFlowEdge, type FlowNode, type ConditionEdge } from '../../../lib/pipelineFlow';
 import { PipelineStepNode } from './PipelineStepNode';
+import { PipelineDelayNode } from './PipelineDelayNode';
+import { PipelineGateNode } from './PipelineGateNode';
+import { PipelineSubPipelineNode } from './PipelineSubPipelineNode';
 import { PipelineConditionEdge } from './PipelineConditionEdge';
 
-const nodeTypes = { step: PipelineStepNode };
+const nodeTypes = { step: PipelineStepNode, delay: PipelineDelayNode, gate: PipelineGateNode, pipeline: PipelineSubPipelineNode };
 const edgeTypes = { condition: PipelineConditionEdge };
 // Hoisted to module scope, not created inline on <ReactFlow>'s props: a
 // fresh object/array literal every render makes React Flow's own internal
@@ -87,7 +90,7 @@ export function PipelineCanvas({ nodes, edges, selection, onNodesChange, onEdges
   const selectedNodeId = selection?.type === 'node' ? selection.id : null;
   const selectedEdgeId = selection?.type === 'edge' ? selection.id : null;
 
-  // Per-node cache, keyed by id: reuses the exact same StepNode object
+  // Per-node cache, keyed by id: reuses the exact same FlowNode object
   // across renders for any node whose own PipelineNode reference AND
   // `selected` flag haven't changed, instead of toFlowNode() building a
   // brand-new object for literally every node on every render (a plain
@@ -101,10 +104,10 @@ export function PipelineCanvas({ nodes, edges, selection, onNodesChange, onEdges
   // ever painted) and, worse, fed a self-sustaining onNodesChange loop
   // during a real connection-drag gesture ("Maximum update depth exceeded",
   // React error #185) — both confirmed via this rewrite's own testing.
-  const nodeCacheRef = useRef(new Map<string, { source: PipelineNode; selected: boolean; result: StepNode }>());
-  const flowNodes: StepNode[] = useMemo(() => {
+  const nodeCacheRef = useRef(new Map<string, { source: PipelineNode; selected: boolean; result: FlowNode }>());
+  const flowNodes: FlowNode[] = useMemo(() => {
     const cache = nodeCacheRef.current;
-    const next = new Map<string, { source: PipelineNode; selected: boolean; result: StepNode }>();
+    const next = new Map<string, { source: PipelineNode; selected: boolean; result: FlowNode }>();
     const result = nodes.map((n) => {
       const selected = n.id === selectedNodeId;
       const cached = cache.get(n.id);
@@ -139,7 +142,7 @@ export function PipelineCanvas({ nodes, edges, selection, onNodesChange, onEdges
   // change actually touched — every OTHER item keeps the exact object
   // reference it already had in flowNodes/flowEdges. Reuse that signal on
   // the way back into this app's own PipelineNode[]/PipelineEdge[] shape:
-  // an item whose StepNode/ConditionEdge comes back unchanged reuses its
+  // an item whose FlowNode/ConditionEdge comes back unchanged reuses its
   // ORIGINAL PipelineNode/PipelineEdge object instead of being rebuilt via
   // fromFlowNode()/fromFlowEdge(). Skipping this made a plain .map() rebuild
   // EVERY item's identity on ANY single change (one node dragged, one edge
@@ -151,13 +154,38 @@ export function PipelineCanvas({ nodes, edges, selection, onNodesChange, onEdges
   // into "Maximum update depth exceeded" (React error #185) — confirmed via
   // this rewrite's own testing.
   const handleNodesChange = useCallback(
-    (changes: NodeChange<StepNode>[]) => {
+    (changes: NodeChange<FlowNode>[]) => {
       const prevById = new Map(flowNodes.map((n) => [n.id, n]));
       const sourceById = new Map(nodes.map((n) => [n.id, n]));
-      const updated = applyNodeChanges<StepNode>(changes, flowNodes);
-      onNodesChange(updated.map((n) => (n === prevById.get(n.id) ? sourceById.get(n.id)! : fromFlowNode(n))));
+      const updated = applyNodeChanges<FlowNode>(changes, flowNodes);
+      onNodesChange(updated.map((n) => (n === prevById.get(n.id) ? sourceById.get(n.id)! : fromFlowNode(n, sourceById.get(n.id)))));
+
+      // Clicking a node (or the empty pane, or a rubber-band drag-select)
+      // dispatches its selection change through exactly this `onNodesChange`
+      // callback as `type: 'select'` entries — NOT through <ReactFlow>'s own
+      // `onSelectionChange` prop (handleSelectionChange, below), which can
+      // never observe a real before/after delta on a fully controlled
+      // canvas like this one: the `onNodesChange` call just above already
+      // triggers a re-render that hands React Flow a fresh `nodes` prop
+      // whose `selected` flags are re-derived from THIS app's own
+      // `selection` state (toFlowNode's `selected: n.id === selectedId`) —
+      // silently reverting the click's internal selection change back to
+      // whatever it was before, in the same tick, before React Flow's own
+      // listener ever gets a chance to notice anything changed. Confirmed
+      // via this rewrite's own testing: `onNodesChange` reliably received
+      // `[{id: clickedNode, type: 'select', selected: true}, {id:
+      // previouslySelected, type: 'select', selected: false}]` on a plain
+      // click, while `onSelectionChange` never fired at all for it — a
+      // second, later click always looked like a no-op because the "new"
+      // selection kept getting reverted before anyone downstream saw it.
+      // Deriving the new selection from `updated` here instead sidesteps
+      // that reconciliation race entirely.
+      if (changes.some((c) => c.type === 'select')) {
+        const selectedNow = updated.filter((n) => n.selected);
+        onSelectionChange(selectedNow.length === 1 ? { type: 'node', id: selectedNow[0].id } : null);
+      }
     },
-    [flowNodes, nodes, onNodesChange]
+    [flowNodes, nodes, onNodesChange, onSelectionChange]
   );
   const handleEdgesChange = useCallback(
     (changes: EdgeChange<ConditionEdge>[]) => {
@@ -174,7 +202,7 @@ export function PipelineCanvas({ nodes, edges, selection, onNodesChange, onEdges
   // it would with the internal useNodesState/useEdgesState convenience
   // hooks — onNodesDelete is the hook meant for exactly this cleanup.
   const handleNodesDelete = useCallback(
-    (deleted: StepNode[]) => {
+    (deleted: FlowNode[]) => {
       const removedIds = new Set(deleted.map((n) => n.id));
       onEdgesChange(edges.filter((e) => !removedIds.has(e.from) && !removedIds.has(e.to)));
       if (selection?.type === 'node' && removedIds.has(selection.id)) onSelectionChange(null);
@@ -229,8 +257,13 @@ export function PipelineCanvas({ nodes, edges, selection, onNodesChange, onEdges
   // which renders again, forever ("Maximum update depth exceeded", React
   // error #185, hit while first building this — see also toFlowNode()'s
   // width/height comment for the other half of that same bug).
+  // A backstop, not the primary mechanism — see handleNodesChange's own
+  // comment for why a plain node click has to be handled there instead.
+  // Kept wired for whatever this DOES still reliably fire for (e.g. a
+  // rubber-band drag-select ending), so it stays a defensive no-op rather
+  // than dead code.
   const handleSelectionChange = useCallback(
-    ({ nodes: selNodes, edges: selEdges }: { nodes: StepNode[]; edges: ConditionEdge[] }) => {
+    ({ nodes: selNodes, edges: selEdges }: { nodes: FlowNode[]; edges: ConditionEdge[] }) => {
       if (selNodes.length === 1 && selEdges.length === 0) onSelectionChange({ type: 'node', id: selNodes[0].id });
       else if (selEdges.length === 1 && selNodes.length === 0) onSelectionChange({ type: 'edge', id: selEdges[0].id });
       else onSelectionChange(null);
@@ -239,7 +272,7 @@ export function PipelineCanvas({ nodes, edges, selection, onNodesChange, onEdges
   );
 
   const handleNodeContextMenu = useCallback(
-    (e: React.MouseEvent, node: StepNode) => {
+    (e: React.MouseEvent, node: FlowNode) => {
       e.preventDefault();
       onNodesChange(nodes.filter((n) => n.id !== node.id));
       onEdgesChange(edges.filter((x) => x.from !== node.id && x.to !== node.id));
@@ -250,7 +283,7 @@ export function PipelineCanvas({ nodes, edges, selection, onNodesChange, onEdges
 
   return (
     <ReactFlowProvider>
-      <ReactFlow<StepNode, ConditionEdge>
+      <ReactFlow<FlowNode, ConditionEdge>
         nodes={flowNodes}
         edges={flowEdges}
         nodeTypes={nodeTypes}

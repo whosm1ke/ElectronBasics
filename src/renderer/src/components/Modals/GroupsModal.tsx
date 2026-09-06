@@ -11,14 +11,21 @@
 // batch-runner.js's openBatchConfig (not yet ported) to actually run a
 // group — same as the original.
 import { useState } from 'react';
-import { ArrowLeft, Play, Pencil, Layers } from 'lucide-react';
+import { ArrowLeft, Play, Pencil, Layers, Copy } from 'lucide-react';
 import type { Snippet, Group } from '@shared/types';
-import { snippetIcon, newId, tagColors } from '../../lib/utils';
+import { snippetIcon, newId, tagColors, timeAgo } from '../../lib/utils';
+import { InfoHint } from '../shared/InfoHint';
+import { SnippetMultiPickerList, snippetPickerItems } from '../shared/SnippetPicker';
 import { showToast } from '../../lib/toast';
 import { useSnippetsVersion, bumpSnippetsVersion } from '../../store/useSnippetsVersion';
 import { useGroupsStore, closeGroups, openGroupEditor, showGroupsListView } from '../../store/useGroupsStore';
 import { state } from '../../../modules/state';
 import { openBatchConfig } from '../../store/useBatchStore';
+
+async function persistGroups() {
+  state.groups = await window.electronAPI.saveGroups(state.groups as Group[]);
+  bumpSnippetsVersion();
+}
 
 function runGroup(group: Group) {
   const list = group.snippetIds.map((id) => (state.snippets as Snippet[]).find((s) => s.id === id)).filter((s): s is Snippet => Boolean(s));
@@ -26,13 +33,36 @@ function runGroup(group: Group) {
     showToast('This group has no snippets left to run — edit it first', 'error');
     return;
   }
+  // Fire-and-forget — a group's own run-tracking is a nice-to-have counter,
+  // not something the batch run itself should ever wait on.
+  const groups = state.groups as Group[];
+  const g = groups.find((x) => x.id === group.id);
+  if (g) {
+    g.runCount += 1;
+    g.lastRunAt = new Date().toISOString();
+    void persistGroups();
+  }
   closeGroups();
   openBatchConfig(list);
 }
 
+function duplicateGroup(group: Group) {
+  const groups = state.groups as Group[];
+  const copy: Group = { ...group, id: newId('grp'), name: `${group.name || '(untitled group)'} copy`, runCount: 0, lastRunAt: null };
+  groups.push(copy);
+  void persistGroups();
+  showToast(`Duplicated "${group.name || '(untitled group)'}"`);
+}
+
+// Cards show at most this many member chips before collapsing the rest
+// into a "+N" chip — a group can hold far more snippets than fit on one
+// card without this.
+const MAX_MEMBER_CHIPS = 6;
+
 function GroupCard({ group }: { group: Group }) {
   const snippets = state.snippets as Snippet[];
-  const validCount = group.snippetIds.filter((id) => snippets.some((s) => s.id === id)).length;
+  const members = group.snippetIds.map((id) => snippets.find((s) => s.id === id)).filter((s): s is Snippet => Boolean(s));
+  const validCount = members.length;
   // Groups don't carry their own icon/color in the data model — a
   // hash-derived badge (same function Card.tsx uses for tag colors) gives
   // each group a stable, distinct-enough look without adding a field.
@@ -49,10 +79,23 @@ function GroupCard({ group }: { group: Group }) {
           <div className="group-card-meta">
             {validCount} snippet{validCount === 1 ? '' : 's'}
             {validCount < group.snippetIds.length ? ' · some deleted' : ''}
+            {group.runCount > 0 ? ` · run ${group.runCount}× · ${timeAgo(group.lastRunAt)}` : ''}
           </div>
         </div>
       </div>
       {group.description && <div className="group-card-description">{group.description}</div>}
+      {members.length > 0 && (
+        <div className="group-card-members">
+          {members.slice(0, MAX_MEMBER_CHIPS).map((s) => (
+            <span key={s.id} className="group-card-member-chip" title={s.name}>
+              {snippetIcon(s)} {s.name}
+            </span>
+          ))}
+          {members.length > MAX_MEMBER_CHIPS && (
+            <span className="group-card-member-chip group-card-member-more">+{members.length - MAX_MEMBER_CHIPS} more</span>
+          )}
+        </div>
+      )}
       <div className="group-card-actions">
         <button type="button" className="btn btn-small btn-primary" onClick={() => runGroup(group)}>
           <Play size={13} fill="currentColor" stroke="none" />
@@ -61,6 +104,9 @@ function GroupCard({ group }: { group: Group }) {
         <button type="button" className="btn btn-small" onClick={() => openGroupEditor(group)}>
           <Pencil size={13} />
           <span>Edit</span>
+        </button>
+        <button type="button" className="btn btn-small btn-ghost" title="Duplicate group" onClick={() => duplicateGroup(group)}>
+          <Copy size={13} />
         </button>
       </div>
     </div>
@@ -76,8 +122,9 @@ function GroupsListView() {
           <ArrowLeft size={16} />
         </button>
         <div className="screen-header-title">
-          <h2>Groups</h2>
-          <span className="field-hint">Save a set of snippets once, then run them all together anytime — no reselecting.</span>
+          <h2>
+            Groups <InfoHint text="Save a set of snippets once, then run them all together anytime — no reselecting." />
+          </h2>
         </div>
         <button type="button" className="btn btn-small" onClick={() => openGroupEditor(null)}>
           + New group
@@ -107,6 +154,13 @@ function GroupEditorView({ editingId }: { editingId: string | null }) {
 
   const snippets = state.snippets as Snippet[];
 
+  function toggleSnippet(id: string) {
+    const next = new Set(selectedIds);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setSelectedIds(next);
+  }
+
   async function save() {
     const finalName = name.trim() || 'Untitled group';
     const finalDescription = description.trim();
@@ -116,7 +170,7 @@ function GroupEditorView({ editingId }: { editingId: string | null }) {
       return;
     }
     const id = editingId || newId('grp');
-    const group: Group = { id, name: finalName, description: finalDescription, snippetIds };
+    const group: Group = { id, name: finalName, description: finalDescription, snippetIds, runCount: editingGroup?.runCount ?? 0, lastRunAt: editingGroup?.lastRunAt ?? null };
     const existingIdx = groups.findIndex((g) => g.id === id);
     if (existingIdx >= 0) groups[existingIdx] = group;
     else groups.push(group);
@@ -150,36 +204,16 @@ function GroupEditorView({ editingId }: { editingId: string | null }) {
         <label className="field-label" htmlFor="groupNameInput">Name</label>
         <input type="text" id="groupNameInput" className="field-input" placeholder="e.g. Morning setup" autoComplete="off" value={name} onChange={(e) => setName(e.target.value)} autoFocus />
 
-        <label className="field-label" htmlFor="groupDescriptionInput">
-          Description <span className="field-hint">(optional)</span>
+        <label className="field-label" htmlFor="groupDescriptionInput" title="Optional">
+          Description
         </label>
         <textarea id="groupDescriptionInput" className="field-textarea" rows={2} placeholder="What this group is for, when to run it…" value={description} onChange={(e) => setDescription(e.target.value)} />
 
-        <label className="field-label">Snippets in this group</label>
-        <div className="group-snippet-checklist no-scrollbar">
-          {snippets.length === 0 ? (
-            <div className="variables-empty">No snippets yet — add some first.</div>
-          ) : (
-            snippets.map((s) => (
-              <label className="group-checklist-row" key={s.id}>
-                <input
-                  type="checkbox"
-                  checked={selectedIds.has(s.id)}
-                  onChange={(e) => {
-                    const next = new Set(selectedIds);
-                    if (e.target.checked) next.add(s.id);
-                    else next.delete(s.id);
-                    setSelectedIds(next);
-                  }}
-                />
-                <span className="group-checklist-label">
-                  {snippetIcon(s)} {s.name}
-                </span>
-                <span className="group-checklist-tag">{s.tag}</span>
-              </label>
-            ))
-          )}
-        </div>
+        <label className="field-label">
+          Snippets in this group
+          <span className="field-label-count">{selectedIds.size} selected</span>
+        </label>
+        <SnippetMultiPickerList items={snippetPickerItems(snippets)} selectedIds={selectedIds} onToggle={toggleSnippet} />
       </div>
       <div className="screen-footer screen-footer-left">
         {editingGroup ? (

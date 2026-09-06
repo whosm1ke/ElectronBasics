@@ -21,6 +21,8 @@ import { closePipelines, isPipelinesOpen } from '../store/usePipelinesStore';
 import { closeHealth, isHealthOpen } from '../store/useHealthStore';
 import { closeScheduleOverview, isScheduleOverviewOpen } from '../store/useScheduleStore';
 import { closeTerminalHistory, isTerminalHistoryOpen } from '../store/useTerminalHistoryStore';
+import { closeTemplateGenerator, isTemplateGeneratorOpen } from '../store/useTemplateStore';
+import { openCommandPalette, closeCommandPalette, isCommandPaletteOpen } from '../store/useCommandPaletteStore';
 import { isBatchModalOpen, closeBatchModal } from '../store/useBatchStore';
 import { isAnyContextMenuOpen, isAnyCopyDropdownOpen } from './menuState';
 import { duplicateSnippet, togglePin } from './snippetsStore';
@@ -51,6 +53,8 @@ document.addEventListener('keydown', (e) => {
     isHealthOpen() ||
     isScheduleOverviewOpen() ||
     isTerminalHistoryOpen() ||
+    isTemplateGeneratorOpen() ||
+    isCommandPaletteOpen() ||
     isBatchModalOpen();
 
   if (e.key === 'Escape') {
@@ -63,6 +67,8 @@ document.addEventListener('keydown', (e) => {
     else if (isHealthOpen()) closeHealth();
     else if (isScheduleOverviewOpen()) closeScheduleOverview();
     else if (isTerminalHistoryOpen()) closeTerminalHistory();
+    else if (isTemplateGeneratorOpen()) closeTemplateGenerator();
+    else if (isCommandPaletteOpen()) closeCommandPalette();
     else if (isHistoryOpen()) closeHistory();
     else if (isSettingsOpen()) closeSettings();
     // Radix's own DismissableLayer already closes an open context menu/
@@ -103,6 +109,9 @@ document.addEventListener('keydown', (e) => {
   } else if (e.ctrlKey && (e.key === 'h' || e.key === 'H')) {
     e.preventDefault();
     openHistory();
+  } else if (e.ctrlKey && (e.key === 'k' || e.key === 'K')) {
+    e.preventDefault();
+    openCommandPalette();
   } else if (e.ctrlKey && (e.key === 'p' || e.key === 'P')) {
     if (state.selectedIndex >= 0 && filtered[state.selectedIndex]) {
       e.preventDefault();

@@ -156,6 +156,8 @@ export const DEFAULT_SNIPPETS: Snippet[] = DEFAULT_SNIPPET_SEEDS.map((s) => ({
   background: false,
   autoRestart: false,
   externalSource: null,
+  captures: null,
+  ssh: null,
 }));
 
 export function ensureSnippetsFile(): void {

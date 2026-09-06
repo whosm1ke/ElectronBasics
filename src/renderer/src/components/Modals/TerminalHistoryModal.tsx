@@ -13,6 +13,7 @@ import { closeTerminalHistory, useTerminalHistoryStore } from '../../store/useTe
 import { persistSnippets } from '../../lib/snippetsStore';
 import { openModal } from '../../store/useEditorStore';
 import { state } from '../../../modules/state';
+import { InfoHint } from '../shared/InfoHint';
 
 interface Line {
   key: string;
@@ -46,6 +47,8 @@ function blankSnippet(name: string, shell: HistorySource['shell'], lines: string
     background: false,
     autoRestart: false,
     externalSource: null,
+    captures: null,
+    ssh: null,
   };
 }
 
@@ -113,8 +116,9 @@ export function TerminalHistoryModal() {
           <ArrowLeft size={16} />
         </button>
         <div className="screen-header-title">
-          <h2>Import from terminal history</h2>
-          <span className="field-hint">Commands you've already typed into PowerShell or Git Bash on this machine.</span>
+          <h2>
+            Import from terminal history <InfoHint text="Commands you've already typed into PowerShell or Git Bash on this machine." />
+          </h2>
         </div>
       </div>
       <div className="screen-body no-scrollbar">

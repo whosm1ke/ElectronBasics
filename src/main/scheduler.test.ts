@@ -45,6 +45,7 @@ describe('isScheduleDue', () => {
     dailyTime: '09:00',
     cronExpr: '*/15 * * * *',
     lastRunAt: null,
+    paramValues: null,
   };
 
   it('is never due when disabled', () => {

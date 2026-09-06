@@ -1,7 +1,7 @@
 // Payload/result shapes for the run-command and run-sequence IPC channels
 // (src/main/ipc.js), built on top of runShellCommand's result
 // (src/main/shell/exec.js).
-import type { EnvVar } from './snippet';
+import type { EnvVar, SshConfig } from './snippet';
 import type { ShellType } from './shell';
 
 export interface RunCommandPayload {
@@ -14,6 +14,7 @@ export interface RunCommandPayload {
   env?: EnvVar[] | null;
   stdin?: string | null;
   debug?: boolean;
+  ssh?: SshConfig | null;
 }
 
 // Present only when `debug: true` was requested. The elevated path (which
@@ -41,6 +42,7 @@ export interface RunSequencePayload {
   elevated?: boolean;
   env?: EnvVar[] | null;
   stopOnError?: boolean;
+  ssh?: SshConfig | null;
 }
 
 export interface SequenceStepResult extends RunResult {

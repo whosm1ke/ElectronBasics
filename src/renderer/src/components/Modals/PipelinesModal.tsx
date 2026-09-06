@@ -3,50 +3,54 @@
 // inspector side panel. Renders as a full-window "screen" (see style.css's
 // `.screen` section) rather than a small centered `.modal` dialog — same
 // pattern GroupsModal.tsx uses, replacing the snippet list for as long as
-// it's open with its own header Back button. (A brief detour: this
-// genuinely lived in its own separate BrowserWindow for a bit, since a
-// graph editor benefits from more room than a modal gets — reverted back
-// to the in-window screen model on request, since consistency with every
-// other full-screen feature in this app mattered more here.)
+// it's open with its own header Back button.
 //
 // Ported from modules/pipeline-editor.js, then from a hand-rolled
-// imperative canvas (mousedown/mousemove/mouseup dragging,
-// getBoundingClientRect()-based edge-line recomputation — CLAUDE.md used to
-// document this as the app's "one deliberately-not-fully-declarative piece
-// of UI") onto @xyflow/react (see pipeline/PipelineCanvas.tsx) — real
-// pan/zoom, multi-select, keyboard delete, a minimap, and dagre-based
-// auto-layout (pipelineLayout.ts) replaced all of that by hand.
+// imperative canvas onto @xyflow/react (see pipeline/PipelineCanvas.tsx),
+// then extended with four node kinds (step/delay/gate/pipeline — see
+// @shared/types/pipeline.ts), AND/OR join modes, per-step retries, a
+// pipeline-level schedule + concurrency cap, and live run-status painted
+// onto the canvas (see lib/pipelineEngine.ts's header comment).
 //
 // EditorView still owns `nodes`/`edges` as this app's own persisted shape
 // (PipelineNode[]/PipelineEdge[]) in local state — the working copy,
 // discarded on Cancel, same contract as before — and hands them to
 // PipelineCanvas as plain, controlled data; only PipelineCanvas.tsx and
 // pipelineFlow.ts need to know React Flow's own Node/Edge shape exists.
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
-import { ArrowLeft, Play, Pencil, Wand2, Copy, Share2 } from 'lucide-react';
-import type { Pipeline, PipelineNode, PipelineEdge, EdgeCondition, Snippet } from '@shared/types';
-import { snippetIcon, newId, SHELL_LABELS, pipelineConditionLabel, tryCreatePipelineEdge } from '../../lib/utils';
+import { useEffect, useState } from 'react';
+import { ArrowLeft, Play, Pencil, Wand2, Copy, Share2, Clock, ShieldQuestion, Waypoints, PlusCircle, SlidersHorizontal } from 'lucide-react';
+import { InfoHint } from '../shared/InfoHint';
+import type { Pipeline, PipelineNode, PipelineEdge, EdgeCondition, JoinMode, NodeKind, ScheduleType, Snippet } from '@shared/types';
+import { VALID_SCHEDULE_TYPES } from '@shared/types';
+import { snippetIcon, newId, SHELL_LABELS, pipelineConditionLabel, pipelineNodeDisplayName, pipelineReferenceCreatesCycle, collectPipelinePlaceholders, tryCreatePipelineEdge } from '../../lib/utils';
+import { ParamForm } from '../Card/ParamForm';
 import { showToast } from '../../lib/toast';
 import { ThemedSelect } from '../shared/ThemedSelect';
+import { SnippetPickerMenu, snippetPickerItems, type PickerItem, type SnippetPickerState } from '../shared/SnippetPicker';
 import { PipelineCanvas, type Selection } from './pipeline/PipelineCanvas';
 import { layoutPipelineNodes } from '../../lib/pipelineLayout';
-import { usePipelinesStore, openPipelineEditor, showPipelinesListView, closePipelines, savePipelinesList } from '../../store/usePipelinesStore';
+import { usePipelinesStore, openPipelineEditor, showPipelinesListView, closePipelines, closePipelinesForRun, consumePendingReopen, savePipelinesList } from '../../store/usePipelinesStore';
+import { onBatchModalClosed } from '../../lib/events';
+import { openModal } from '../../store/useEditorStore';
 import { state } from '../../../modules/state';
 import { persistSnippets } from '../../lib/snippetsStore';
 import { runPipelineGraph } from '../../lib/pipelineEngine';
 
-/** Every saved snippet, formatted for the shared picker menu — used by both "+ Add step" and "Change step…", which both pick a snippet the same way. `tag`/`filterText` back that menu's own search box and category chips (see SnippetPickerMenu below). */
-function snippetPickerItems(): PickerItem[] {
-  return (state.snippets as Snippet[]).map((s) => ({
-    id: s.id,
-    label: (
-      <>
-        {snippetIcon(s)} {s.name}
-      </>
-    ),
-    tag: s.tag,
-    filterText: `${s.name} ${s.tag} ${s.command}`.toLowerCase(),
-  }));
+const JOIN_MODE_OPTIONS: [JoinMode, string][] = [
+  ['any', 'Any incoming link (OR)'],
+  ['all', 'Every incoming link (AND)'],
+];
+
+function blankNode(kind: NodeKind, x: number, y: number): PipelineNode {
+  return {
+    id: newId('node'), kind, snippetId: '', subPipelineId: '', delaySeconds: 5, label: '',
+    retries: 0, retryDelaySeconds: 5, joinMode: 'any', x, y,
+  };
+}
+
+/** Every saved snippet, formatted for the shared picker menu — used by "+ Snippet"/"Change step…", which both pick a snippet the same way. */
+function allSnippetPickerItems(): PickerItem[] {
+  return snippetPickerItems(state.snippets as Snippet[]);
 }
 
 const CONDITION_OPTIONS: [EdgeCondition, string][] = [
@@ -57,19 +61,66 @@ const CONDITION_OPTIONS: [EdgeCondition, string][] = [
   ['outputContains', 'Output contains text'],
 ];
 
+/**
+ * Every `{{placeholder}}` used anywhere in this pipeline is collected and
+ * prompted for ONCE, up front, rather than skipping every parameterized
+ * step — a small modal (reusing Card.tsx's own ParamForm) gates the actual
+ * run behind it when there's at least one name to collect. Shared by both
+ * ListView's "Run" and EditorView's "Run", which otherwise duplicate this
+ * exact gate/run/persist sequence.
+ *
+ * `closeScreenFirst` used to always be true — this screen and the results
+ * modal were both full-window overlays at the SAME z-index, so leaving the
+ * screen open would bury the results underneath it. Now that `.modal-overlay`
+ * renders above `.screen` (see style.css), EditorView passes `false`
+ * instead: leaving the canvas mounted during a run is what lets
+ * lib/pipelineEngine.ts's live run-status classes (pf-run-active/ok/error/
+ * skipped) actually paint onto something — closing the screen first would
+ * unmount the canvas before the run even starts, silently making that live
+ * visualization a no-op (exactly what happened before this fix). ListView
+ * has no canvas open to visualize onto in the first place, so it keeps
+ * closing first, same as GroupsModal.tsx's own runGroup().
+ */
+function usePipelineParamGate() {
+  const [gate, setGate] = useState<{ nodes: PipelineNode[]; edges: PipelineEdge[]; maxConcurrency: number; names: string[]; closeScreenFirst: boolean } | null>(null);
+
+  async function runWithGate(pipeline: Pick<Pipeline, 'nodes' | 'edges' | 'maxConcurrency'>, closeScreenFirst = true) {
+    const names = collectPipelinePlaceholders(pipeline.nodes, state.snippets as Snippet[]);
+    if (names.length === 0) {
+      if (closeScreenFirst) closePipelinesForRun();
+      await runPipelineGraph(pipeline.nodes, pipeline.edges, { maxConcurrency: pipeline.maxConcurrency });
+      await persistSnippets({ silent: true });
+      return;
+    }
+    setGate({ nodes: pipeline.nodes, edges: pipeline.edges, maxConcurrency: pipeline.maxConcurrency, names, closeScreenFirst });
+  }
+
+  const gateModal = gate && (
+    <div className="modal-overlay" onClick={(e) => { if (e.target === e.currentTarget) setGate(null); }}>
+      <div className="modal">
+        <h2>Values for this run</h2>
+        <p className="field-hint">Collected once for every parameterized step in this pipeline.</p>
+        <ParamForm
+          names={gate.names}
+          onCancel={() => setGate(null)}
+          onRun={async (values) => {
+            const { nodes, edges, maxConcurrency, closeScreenFirst } = gate;
+            setGate(null);
+            if (closeScreenFirst) closePipelinesForRun();
+            await runPipelineGraph(nodes, edges, { maxConcurrency, values });
+            await persistSnippets({ silent: true });
+          }}
+        />
+      </div>
+    </div>
+  );
+
+  return { runWithGate, gateModal };
+}
+
 function ListView() {
   const { pipelines } = usePipelinesStore();
-
-  // Closes this screen before running — same reasoning as GroupsModal.tsx's
-  // runGroup(): the batch-results modal and this screen are both
-  // full-window overlays, so leaving this open would just bury the results
-  // underneath it (or vice versa, depending on DOM order) rather than
-  // showing them.
-  async function runSaved(pipeline: Pipeline) {
-    closePipelines();
-    await runPipelineGraph(pipeline.nodes, pipeline.edges);
-    await persistSnippets({ silent: true }); // runCount/lastRunAt bumps — cards pick them up next real refresh
-  }
+  const { runWithGate, gateModal } = usePipelineParamGate();
 
   return (
     <>
@@ -78,8 +129,9 @@ function ListView() {
           <ArrowLeft size={16} />
         </button>
         <div className="screen-header-title">
-          <h2>Pipelines</h2>
-          <span className="field-hint">Chain snippets with branching — run different steps depending on whether the previous one succeeded.</span>
+          <h2>
+            Pipelines <InfoHint text="Chain snippets with branching — run different steps depending on whether the previous one succeeded." />
+          </h2>
         </div>
         <button type="button" className="btn btn-small" onClick={() => openPipelineEditor(null)}>
           + New pipeline
@@ -93,13 +145,20 @@ function ListView() {
             {pipelines.map((p) => (
               <div className="group-row" key={p.id}>
                 <div className="group-row-info">
-                  <div className="group-row-name">{p.name || '(untitled pipeline)'}</div>
+                  <div className="group-row-name">
+                    {p.name || '(untitled pipeline)'}
+                    {p.schedule?.enabled && (
+                      <span className="schedule-badge" title="Runs automatically on a schedule">
+                        <Clock size={11} />
+                      </span>
+                    )}
+                  </div>
                   <div className="group-row-count">
                     {p.nodes.length} step{p.nodes.length === 1 ? '' : 's'} · {p.edges.length} connection{p.edges.length === 1 ? '' : 's'}
                   </div>
                   {p.description && <div className="group-row-description">{p.description}</div>}
                 </div>
-                <button type="button" className="btn btn-small btn-primary" onClick={() => runSaved(p)}>
+                <button type="button" className="btn btn-small btn-primary" onClick={() => runWithGate(p)}>
                   <Play size={13} fill="currentColor" stroke="none" />
                   <span>Run</span>
                 </button>
@@ -112,126 +171,8 @@ function ListView() {
           </div>
         )}
       </div>
+      {gateModal}
     </>
-  );
-}
-
-interface PickerItem {
-  id: string;
-  label: ReactNode;
-  /** The item's category/tag, when it has one — drives the filter-chip row below. Omitted for "Connect to…"'s targets (pipeline steps, not standalone snippets — a tag chip row over a handful of steps isn't worth the space). */
-  tag?: string;
-  /** Lowercased name+tag+command blob the search box matches against — same "search everything, cheaply" shape as the main list's own free-text search. */
-  filterText: string;
-}
-
-// Generic enough to back every "pick one of these" floating menu in the
-// editor: "+ Add step"/"Change step…" (items = every snippet) and the
-// Inspector's "+ Connect to…" (items = every OTHER step in this pipeline) —
-// same look, same positioning/dismiss logic, just a different item list and
-// empty-state message per call site.
-interface SnippetPickerState {
-  anchor: DOMRect;
-  items: PickerItem[];
-  emptyLabel: string;
-  onPick: (id: string) => void;
-}
-
-function SnippetPickerMenu({ picker, onClose }: { picker: SnippetPickerState; onClose: () => void }) {
-  const menuRef = useRef<HTMLDivElement>(null);
-  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
-  const [query, setQuery] = useState('');
-  const [activeTag, setActiveTag] = useState<string | null>(null);
-
-  // Reposition whenever the *content* height changes too (typing a query or
-  // picking a tag can shrink the list a lot), not just on first mount —
-  // otherwise a long "no matches" gap could open up below a short filtered
-  // list, or the menu could clip past the viewport bottom on a big one.
-  useLayoutEffect(() => {
-    const menu = menuRef.current;
-    if (!menu) return;
-    const mRect = menu.getBoundingClientRect();
-    setPos({
-      left: Math.max(6, Math.min(picker.anchor.left, window.innerWidth - mRect.width - 6)),
-      top: Math.min(picker.anchor.bottom + 4, window.innerHeight - mRect.height - 6),
-    });
-  }, [picker, query, activeTag]);
-
-  useEffect(() => {
-    function onDocMouseDown(e: MouseEvent) {
-      if (!(e.target as HTMLElement).closest('#pipelineSnippetPickerMenu')) onClose();
-    }
-    document.addEventListener('mousedown', onDocMouseDown, true);
-    return () => document.removeEventListener('mousedown', onDocMouseDown, true);
-  }, [onClose]);
-
-  // Every distinct tag among this picker's own items, alphabetical — not
-  // the whole library's tag set, so "Connect to…" (whose items have no
-  // `tag` at all) simply shows no chip row.
-  const tags = Array.from(new Set(picker.items.map((i) => i.tag).filter((t): t is string => Boolean(t)))).sort((a, b) => a.localeCompare(b));
-
-  const q = query.trim().toLowerCase();
-  const visible = picker.items.filter((item) => (!activeTag || item.tag === activeTag) && (!q || item.filterText.includes(q)));
-
-  function pick(id: string) {
-    picker.onPick(id);
-    onClose();
-  }
-
-  return (
-    <div
-      ref={menuRef}
-      className="context-menu pipeline-picker-menu"
-      id="pipelineSnippetPickerMenu"
-      style={pos ? { left: pos.left, top: pos.top, visibility: 'visible' } : { visibility: 'hidden' }}
-      onKeyDown={(e) => {
-        if (e.key === 'Escape') { onClose(); return; }
-        if (e.key === 'Enter' && visible.length > 0) { e.preventDefault(); pick(visible[0].id); }
-      }}
-    >
-      {picker.items.length > 0 && (
-        <input
-          type="text"
-          className="field-input pipeline-picker-search"
-          placeholder="Search by name, tag, or command…"
-          autoComplete="off"
-          autoFocus
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-        />
-      )}
-      {tags.length > 1 && (
-        <div className="pipeline-picker-tags no-scrollbar">
-          <button type="button" className={'pipeline-picker-tag-chip' + (activeTag === null ? ' active' : '')} onClick={() => setActiveTag(null)}>
-            All
-          </button>
-          {tags.map((tag) => (
-            <button
-              type="button"
-              key={tag}
-              className={'pipeline-picker-tag-chip' + (activeTag === tag ? ' active' : '')}
-              onClick={() => setActiveTag(activeTag === tag ? null : tag)}
-            >
-              {tag}
-            </button>
-          ))}
-        </div>
-      )}
-      <div className="pipeline-picker-list no-scrollbar">
-        {picker.items.length === 0 ? (
-          <div className="context-menu-item">{picker.emptyLabel}</div>
-        ) : visible.length === 0 ? (
-          <div className="context-menu-item pipeline-picker-empty">No matches</div>
-        ) : (
-          visible.map((item) => (
-            <button type="button" key={item.id} className="context-menu-item" onClick={() => pick(item.id)}>
-              <span>{item.label}</span>
-              {item.tag && <span className="pipeline-picker-item-tag">{item.tag}</span>}
-            </button>
-          ))
-        )}
-      </div>
-    </div>
   );
 }
 
@@ -239,6 +180,8 @@ function Inspector({
   selection,
   nodes,
   edges,
+  pipelines,
+  editingId,
   setNodes,
   setEdges,
   setSelection,
@@ -247,6 +190,8 @@ function Inspector({
   selection: Selection;
   nodes: PipelineNode[];
   edges: PipelineEdge[];
+  pipelines: Pipeline[];
+  editingId: string | null;
   setNodes: (n: PipelineNode[]) => void;
   setEdges: (e: PipelineEdge[]) => void;
   setSelection: (s: Selection) => void;
@@ -264,9 +209,12 @@ function Inspector({
     setEdges(edges.filter((e) => e.id !== edgeId));
     setSelection(null);
   }
-  /** Copies a step's snippet reference (never its connections — a duplicate starts unconnected, same as adding a brand-new step) at a small offset so it doesn't sit exactly on top of the original. */
+  function updateNode(nodeId: string, patch: Partial<PipelineNode>) {
+    setNodes(nodes.map((n) => (n.id === nodeId ? { ...n, ...patch } : n)));
+  }
+  /** Copies a step's own config (never its connections — a duplicate starts unconnected, same as adding a brand-new step) at a small offset so it doesn't sit exactly on top of the original. */
   function duplicateNode(node: PipelineNode) {
-    const copy: PipelineNode = { id: newId('node'), snippetId: node.snippetId, x: node.x + 30, y: node.y + 30 };
+    const copy: PipelineNode = { ...node, id: newId('node'), x: node.x + 30, y: node.y + 30 };
     setNodes([...nodes, copy]);
     setSelection({ type: 'node', id: copy.id });
   }
@@ -274,14 +222,7 @@ function Inspector({
   function connectFrom(node: PipelineNode) {
     const targets: PickerItem[] = nodes
       .filter((n) => n.id !== node.id)
-      .map((n) => {
-        const s = snippets.find((sn) => sn.id === n.snippetId);
-        return {
-          id: n.id,
-          label: s ? <>{snippetIcon(s)} {s.name}</> : <>⚠ (deleted snippet)</>,
-          filterText: s ? `${s.name} ${s.tag} ${s.command}`.toLowerCase() : 'deleted snippet',
-        };
-      });
+      .map((n) => ({ id: n.id, label: <>{pipelineNodeDisplayName(n, snippets, pipelines)}</>, filterText: pipelineNodeDisplayName(n, snippets, pipelines).toLowerCase() }));
     return (anchor: HTMLElement) =>
       openPicker(anchor, targets, 'No other steps to connect to yet', (targetId) => {
         const result = tryCreatePipelineEdge(edges, node.id, targetId);
@@ -297,32 +238,17 @@ function Inspector({
   if (selection.type === 'node') {
     const node = nodes.find((n) => n.id === selection.id);
     if (!node) return null;
-    const snippet = snippets.find((s) => s.id === node.snippetId);
     const outgoing = edges.filter((e) => e.from === node.id);
-    return (
-      <div className="pipeline-inspector no-scrollbar">
-        <div className="pipeline-inspector-title">Step</div>
-        <div className="pipeline-inspector-name">{snippet ? `${snippetIcon(snippet)} ${snippet.name}` : '⚠ (deleted snippet)'}</div>
-        {snippet && (
-          <div className="pipeline-inspector-meta">
-            {SHELL_LABELS[snippet.shell] || snippet.shell} · {snippet.tag}
-          </div>
+    const hasIncoming = edges.some((e) => e.to === node.id);
+
+    const commonFooter = (
+      <>
+        {hasIncoming && (
+          <>
+            <label className="field-label">When more than one link points here</label>
+            <ThemedSelect value={node.joinMode} options={JOIN_MODE_OPTIONS.map(([value, label]) => ({ value, label }))} onChange={(joinMode) => updateNode(node.id, { joinMode })} />
+          </>
         )}
-        <button
-          type="button"
-          className="btn btn-small"
-          onClick={(e) =>
-            openPicker(e.currentTarget, snippetPickerItems(), 'No snippets yet', (newSnippetId) => {
-              setNodes(nodes.map((n) => (n.id === node.id ? { ...n, snippetId: newSnippetId } : n)));
-            })
-          }
-        >
-          Change step…
-        </button>
-        <button type="button" className="btn btn-small" onClick={() => duplicateNode(node)}>
-          <Copy size={12} />
-          <span>Duplicate step</span>
-        </button>
         <button type="button" className="btn btn-small" onClick={(e) => connectFrom(node)(e.currentTarget)}>
           <Share2 size={12} />
           <span>Connect to…</span>
@@ -335,15 +261,113 @@ function Inspector({
             <div className="pipeline-inspector-subtitle">Connects to</div>
             {outgoing.map((edge) => {
               const targetNode = nodes.find((n) => n.id === edge.to);
-              const targetSnippet = targetNode && snippets.find((s) => s.id === targetNode.snippetId);
               return (
                 <button type="button" key={edge.id} className="pipeline-inspector-edge-row" onClick={() => setSelection({ type: 'edge', id: edge.id })}>
-                  {pipelineConditionLabel(edge)} → {targetSnippet ? targetSnippet.name : '?'}
+                  {pipelineConditionLabel(edge)} → {targetNode ? pipelineNodeDisplayName(targetNode, snippets, pipelines) : '?'}
                 </button>
               );
             })}
           </>
         )}
+      </>
+    );
+
+    if (node.kind === 'step') {
+      const snippet = snippets.find((s) => s.id === node.snippetId);
+      return (
+        <div className="pipeline-inspector no-scrollbar">
+          <div className="pipeline-inspector-title">Step</div>
+          <div className="pipeline-inspector-name">{snippet ? `${snippetIcon(snippet)} ${snippet.name}` : '⚠ (deleted snippet)'}</div>
+          {snippet && (
+            <div className="pipeline-inspector-meta">
+              {SHELL_LABELS[snippet.shell] || snippet.shell} · {snippet.tag}
+            </div>
+          )}
+          <button
+            type="button"
+            className="btn btn-small"
+            onClick={(e) =>
+              openPicker(e.currentTarget, allSnippetPickerItems(), 'No snippets yet', (newSnippetId) => updateNode(node.id, { snippetId: newSnippetId }))
+            }
+          >
+            Change step…
+          </button>
+          {snippet && (
+            <button type="button" className="btn btn-small" onClick={() => openModal(snippet)}>
+              <Pencil size={12} />
+              <span>Edit snippet…</span>
+            </button>
+          )}
+          <button type="button" className="btn btn-small" onClick={() => duplicateNode(node)}>
+            <Copy size={12} />
+            <span>Duplicate step</span>
+          </button>
+          <label className="field-label">Retries on failure</label>
+          <div className="schedule-field-row">
+            <input type="number" className="field-input" min={0} max={10} value={node.retries} onChange={(e) => updateNode(node.id, { retries: Math.max(0, Math.min(10, Number(e.target.value) || 0)) })} />
+            <span className="field-hint">extra attempts</span>
+          </div>
+          {node.retries > 0 && (
+            <div className="schedule-field-row">
+              <input type="number" className="field-input" min={0} value={node.retryDelaySeconds} onChange={(e) => updateNode(node.id, { retryDelaySeconds: Math.max(0, Number(e.target.value) || 0) })} />
+              <span className="field-hint">seconds between attempts</span>
+            </div>
+          )}
+          {commonFooter}
+        </div>
+      );
+    }
+
+    if (node.kind === 'delay') {
+      return (
+        <div className="pipeline-inspector no-scrollbar">
+          <div className="pipeline-inspector-title">Delay</div>
+          <label className="field-label">Caption (optional)</label>
+          <input type="text" className="field-input" placeholder={`Wait ${node.delaySeconds}s`} value={node.label} onChange={(e) => updateNode(node.id, { label: e.target.value })} />
+          <label className="field-label">Wait</label>
+          <div className="schedule-field-row">
+            <input type="number" className="field-input" min={1} value={node.delaySeconds} onChange={(e) => updateNode(node.id, { delaySeconds: Math.max(1, Number(e.target.value) || 1) })} />
+            <span className="field-hint">seconds</span>
+          </div>
+          {commonFooter}
+        </div>
+      );
+    }
+
+    if (node.kind === 'gate') {
+      return (
+        <div className="pipeline-inspector no-scrollbar">
+          <div className="pipeline-inspector-title">Approval gate</div>
+          <p className="field-hint">Pauses an interactive run for a manual Continue/Abort. Auto-skipped (treated as not approved) on a scheduled run — there's nowhere to ask.</p>
+          <label className="field-label">Prompt</label>
+          <input type="text" className="field-input" placeholder="Approve deploy?" value={node.label} onChange={(e) => updateNode(node.id, { label: e.target.value })} />
+          {commonFooter}
+        </div>
+      );
+    }
+
+    // 'pipeline'
+    const target = pipelines.find((p) => p.id === node.subPipelineId);
+    const candidateIds = pipelines.filter((p) => p.id !== editingId && !pipelineReferenceCreatesCycle(pipelines, editingId, [p.id])).map((p) => p.id);
+    return (
+      <div className="pipeline-inspector no-scrollbar">
+        <div className="pipeline-inspector-title">Sub-pipeline</div>
+        <div className="pipeline-inspector-name">{target ? target.name || '(untitled pipeline)' : '⚠ Not set'}</div>
+        <button
+          type="button"
+          className="btn btn-small"
+          onClick={(e) =>
+            openPicker(
+              e.currentTarget,
+              pipelines.filter((p) => candidateIds.includes(p.id)).map((p) => ({ id: p.id, label: <>{p.name || '(untitled pipeline)'}</>, filterText: (p.name || '').toLowerCase() })),
+              'No other pipelines available (would create a cycle, or none exist yet)',
+              (subPipelineId) => updateNode(node.id, { subPipelineId })
+            )
+          }
+        >
+          Change target…
+        </button>
+        {commonFooter}
       </div>
     );
   }
@@ -352,8 +376,6 @@ function Inspector({
   if (!edge) return null;
   const fromNode = nodes.find((n) => n.id === edge.from);
   const toNode = nodes.find((n) => n.id === edge.to);
-  const fromSnippet = fromNode && snippets.find((s) => s.id === fromNode.snippetId);
-  const toSnippet = toNode && snippets.find((s) => s.id === toNode.snippetId);
   const needsValue = edge.condition === 'exitCode' || edge.condition === 'outputContains';
 
   function updateEdge(patch: Partial<PipelineEdge>) {
@@ -364,7 +386,7 @@ function Inspector({
     <div className="pipeline-inspector no-scrollbar">
       <div className="pipeline-inspector-title">Connection</div>
       <div className="pipeline-inspector-meta">
-        {fromSnippet ? fromSnippet.name : '?'} → {toSnippet ? toSnippet.name : '?'}
+        {fromNode ? pipelineNodeDisplayName(fromNode, snippets, pipelines) : '?'} → {toNode ? pipelineNodeDisplayName(toNode, snippets, pipelines) : '?'}
       </div>
       <label className="field-label">Run the next step when this one…</label>
       <ThemedSelect
@@ -397,6 +419,7 @@ function Inspector({
 function EditorView({ editingId }: { editingId: string | null }) {
   const { pipelines } = usePipelinesStore();
   const editingPipeline = editingId ? pipelines.find((p) => p.id === editingId) : null;
+  const { runWithGate, gateModal } = usePipelineParamGate();
 
   const [name, setName] = useState(editingPipeline?.name || '');
   const [description, setDescription] = useState(editingPipeline?.description || '');
@@ -410,21 +433,26 @@ function EditorView({ editingId }: { editingId: string | null }) {
   const [selection, setSelection] = useState<Selection>(null);
   const [picker, setPicker] = useState<SnippetPickerState | null>(null);
   const [fitViewSignal, setFitViewSignal] = useState(0);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [scheduleEnabled, setScheduleEnabled] = useState(Boolean(editingPipeline?.schedule?.enabled));
+  const [scheduleType, setScheduleType] = useState<ScheduleType>(editingPipeline?.schedule?.type || 'interval');
+  const [intervalMinutes, setIntervalMinutes] = useState(String(editingPipeline?.schedule?.intervalMinutes || 60));
+  const [dailyTime, setDailyTime] = useState(editingPipeline?.schedule?.dailyTime || '09:00');
+  const [cronExpr, setCronExpr] = useState(editingPipeline?.schedule?.cronExpr || '*/15 * * * *');
+  const [maxConcurrency, setMaxConcurrency] = useState(String(editingPipeline?.maxConcurrency || 0));
 
   useEffect(() => {
     const t = setTimeout(() => document.getElementById('pipelineNameInput')?.focus(), 0);
     return () => clearTimeout(t);
   }, []);
 
-  /** Diagonal cascade so successive clicks of "+ Add step" don't all land in the same spot — offset by more than half NODE_WIDTH/NODE_HEIGHT so even the 2nd/3rd step is legible without immediately needing auto-arrange (dagre), which is the real layout tool once there's more than a handful of steps. */
+  /** Diagonal cascade so successive clicks of "+ Snippet"/"+ Delay"/etc. don't all land in the same spot. */
   function nextNodePosition(): { x: number; y: number } {
     const n = nodes.length;
     return { x: 60 + (n % 5) * 110, y: 60 + (n % 5) * 70 };
   }
 
-  function addNode(snippetId: string) {
-    const pos = nextNodePosition();
-    const node: PipelineNode = { id: newId('node'), snippetId, x: pos.x, y: pos.y };
+  function placeAndSelect(node: PipelineNode) {
     setNodes([...nodes, node]);
     setSelection({ type: 'node', id: node.id });
     // <ReactFlow fitView> only ever fires once, on this component's first
@@ -433,6 +461,23 @@ function EditorView({ editingId }: { editingId: string | null }) {
     // handles) can land outside the visible, clipped canvas area and never
     // come back into view on their own.
     setFitViewSignal((v) => v + 1);
+  }
+
+  function addSnippetStep(snippetId: string) {
+    const pos = nextNodePosition();
+    placeAndSelect({ ...blankNode('step', pos.x, pos.y), snippetId });
+  }
+  function addDelay() {
+    const pos = nextNodePosition();
+    placeAndSelect(blankNode('delay', pos.x, pos.y));
+  }
+  function addGate() {
+    const pos = nextNodePosition();
+    placeAndSelect(blankNode('gate', pos.x, pos.y));
+  }
+  function addSubPipeline(subPipelineId: string) {
+    const pos = nextNodePosition();
+    placeAndSelect({ ...blankNode('pipeline', pos.x, pos.y), subPipelineId });
   }
 
   /** Lays every node out left-to-right via `dagre` (pipelineLayout.ts) — a one-click fix for a graph that's turned into a tangle after a lot of free-form dragging — then fits the viewport to the result. */
@@ -450,7 +495,24 @@ function EditorView({ editingId }: { editingId: string | null }) {
       return;
     }
     const id = editingId || newId('pipe');
-    const pipeline: Pipeline = { id, name: finalName, description: finalDescription, nodes, edges };
+    const subPipelineIds = nodes.filter((n) => n.kind === 'pipeline' && n.subPipelineId).map((n) => n.subPipelineId);
+    if (pipelineReferenceCreatesCycle(pipelines, id, subPipelineIds)) {
+      showToast("Can't save — one of these sub-pipelines eventually points back to this one", 'error');
+      return;
+    }
+    const existingSchedule = editingPipeline?.schedule;
+    const schedule = scheduleEnabled
+      ? {
+          enabled: true,
+          type: scheduleType,
+          intervalMinutes: Number(intervalMinutes) || 60,
+          dailyTime: dailyTime || '09:00',
+          cronExpr: cronExpr.trim() || '*/15 * * * *',
+          lastRunAt: existingSchedule ? existingSchedule.lastRunAt : null,
+          paramValues: existingSchedule ? existingSchedule.paramValues : null,
+        }
+      : null;
+    const pipeline: Pipeline = { id, name: finalName, description: finalDescription, nodes, edges, schedule, maxConcurrency: Math.max(0, Number(maxConcurrency) || 0) };
     const idx = pipelines.findIndex((p) => p.id === id);
     const nextList = idx >= 0 ? pipelines.map((p, i) => (i === idx ? pipeline : p)) : [...pipelines, pipeline];
     await savePipelinesList(nextList);
@@ -468,9 +530,9 @@ function EditorView({ editingId }: { editingId: string | null }) {
   }
 
   async function runFromEditor() {
-    closePipelines();
-    await runPipelineGraph(nodes, edges);
-    await persistSnippets({ silent: true });
+    // false: keep the canvas mounted so the run actually paints onto it —
+    // see usePipelineParamGate()'s header comment.
+    await runWithGate({ nodes, edges, maxConcurrency: Math.max(0, Number(maxConcurrency) || 0) }, false);
   }
 
   return (
@@ -485,22 +547,88 @@ function EditorView({ editingId }: { editingId: string | null }) {
         <input type="text" className="field-input pipeline-description-input" placeholder="Description (optional)" autoComplete="off" value={description} onChange={(e) => setDescription(e.target.value)} />
       </div>
       <div className="pipeline-toolbar">
-        <button
-          type="button"
-          className="btn btn-small"
-          onClick={(e) => setPicker({ anchor: e.currentTarget.getBoundingClientRect(), items: snippetPickerItems(), emptyLabel: 'No snippets yet', onPick: addNode })}
-        >
-          + Add step
-        </button>
-        <button type="button" className="btn btn-small" onClick={autoArrange}>
-          <Wand2 size={12} />
-          <span>Auto-arrange</span>
-        </button>
+        <div className="pipeline-toolbar-group" title="Add to this pipeline">
+          <button type="button" className="btn btn-small" onClick={(e) => setPicker({ anchor: e.currentTarget.getBoundingClientRect(), items: allSnippetPickerItems(), emptyLabel: 'No snippets yet', onPick: addSnippetStep })}>
+            <PlusCircle size={12} />
+            <span>Snippet</span>
+          </button>
+          <button type="button" className="btn btn-small" title="Add a pure wait — no snippet involved" onClick={addDelay}>
+            <Clock size={12} />
+            <span>Delay</span>
+          </button>
+          <button type="button" className="btn btn-small" title="Pause an interactive run for manual approval" onClick={addGate}>
+            <ShieldQuestion size={12} />
+            <span>Gate</span>
+          </button>
+          <button
+            type="button"
+            className="btn btn-small"
+            title="Run another saved pipeline inline"
+            onClick={(e) => {
+              const items: PickerItem[] = pipelines
+                .filter((p) => p.id !== editingId && !pipelineReferenceCreatesCycle(pipelines, editingId, [p.id]))
+                .map((p) => ({ id: p.id, label: <>{p.name || '(untitled pipeline)'}</>, filterText: (p.name || '').toLowerCase() }));
+              setPicker({ anchor: e.currentTarget.getBoundingClientRect(), items, emptyLabel: 'No other pipelines available yet', onPick: addSubPipeline });
+            }}
+          >
+            <Waypoints size={12} />
+            <span>Sub-pipeline</span>
+          </button>
+        </div>
+        <span className="pipeline-toolbar-divider" />
+        <div className="pipeline-toolbar-group" title="Layout & configuration">
+          <button type="button" className="btn btn-small" title="Lay every step out automatically" onClick={autoArrange}>
+            <Wand2 size={12} />
+            <span>Auto-arrange</span>
+          </button>
+          <button type="button" className={'btn btn-small' + (scheduleEnabled ? ' active' : '')} title="Schedule & concurrency" onClick={() => setSettingsOpen((v) => !v)}>
+            <SlidersHorizontal size={12} />
+            <span>Settings</span>
+          </button>
+        </div>
         <span className="hint-spacer" />
-        <span className="field-hint pipeline-toolbar-hint">
-          Drag a step to move it · drag its right dot onto another step to connect · click a step or connection to edit it · Delete key removes what's selected
-        </span>
+        <InfoHint text="Drag a step to move it · drag its right dot onto another to connect · click a step or connection to edit it · Delete removes what's selected" />
       </div>
+      {settingsOpen && (
+        <div className="pipeline-settings-panel">
+          <label className="checkbox-row" htmlFor="pipelineScheduleToggle">
+            <input type="checkbox" id="pipelineScheduleToggle" checked={scheduleEnabled} onChange={(e) => setScheduleEnabled(e.target.checked)} />
+            <span>Run this whole pipeline on a schedule</span>
+          </label>
+          {scheduleEnabled && (
+            <div>
+              <div className="segmented">
+                {(['interval', 'daily', 'cron'] as ScheduleType[]).filter((t) => (VALID_SCHEDULE_TYPES as readonly string[]).includes(t)).map((t) => (
+                  <button type="button" key={t} className={'segmented-btn' + (scheduleType === t ? ' active' : '')} onClick={() => setScheduleType(t)}>
+                    {t === 'interval' ? 'Every N minutes' : t === 'daily' ? 'Daily at' : 'Cron'}
+                  </button>
+                ))}
+              </div>
+              {scheduleType === 'interval' && (
+                <div className="schedule-field-row">
+                  <input type="number" className="field-input" min={1} value={intervalMinutes} onChange={(e) => setIntervalMinutes(e.target.value)} />
+                  <span className="field-hint">minutes</span>
+                </div>
+              )}
+              {scheduleType === 'daily' && (
+                <div className="schedule-field-row">
+                  <input type="time" className="field-input" value={dailyTime} onChange={(e) => setDailyTime(e.target.value)} />
+                </div>
+              )}
+              {scheduleType === 'cron' && (
+                <div className="schedule-field-row">
+                  <input type="text" className="field-input" placeholder="*/15 * * * *" value={cronExpr} onChange={(e) => setCronExpr(e.target.value)} />
+                </div>
+              )}
+            </div>
+          )}
+          <label className="field-label">Max steps running at once</label>
+          <div className="schedule-field-row">
+            <input type="number" className="field-input" min={0} value={maxConcurrency} onChange={(e) => setMaxConcurrency(e.target.value)} />
+            <span className="field-hint">0 = unlimited</span>
+          </div>
+        </div>
+      )}
       <div className="pipeline-editor-body">
         <div className={'pipeline-canvas-wrap' + (nodes.length === 0 ? ' pipeline-canvas-empty-hint' : '')}>
           <PipelineCanvas
@@ -517,6 +645,8 @@ function EditorView({ editingId }: { editingId: string | null }) {
           selection={selection}
           nodes={nodes}
           edges={edges}
+          pipelines={pipelines}
+          editingId={editingId}
           setNodes={setNodes}
           setEdges={setEdges}
           setSelection={setSelection}
@@ -541,12 +671,19 @@ function EditorView({ editingId }: { editingId: string | null }) {
         </div>
       </div>
       {picker && <SnippetPickerMenu picker={picker} onClose={() => setPicker(null)} />}
+      {gateModal}
     </>
   );
 }
 
 export function PipelinesModal() {
   const { open, view, editingId } = usePipelinesStore();
+  // Subscribed once for the life of the app (this component is always
+  // mounted by App.tsx, `open` just toggles what it renders) — reopens this
+  // screen once the results modal a run handed off to (closePipelinesForRun)
+  // is dismissed. A no-op for every other batch/group/tag-run's own results
+  // modal closing, via pendingReopen's own guard.
+  useEffect(() => onBatchModalClosed(consumePendingReopen), []);
   if (!open) return null;
 
   return <div className="screen">{view === 'list' ? <ListView /> : <EditorView editingId={editingId} />}</div>;

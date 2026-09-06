@@ -14,13 +14,15 @@ const GroupOutputSchema = z.object({
   name: z.string(), // trimmed, <=100 chars
   description: z.string(), // trimmed, <=500 chars
   snippetIds: z.array(z.string()), // deduped, max 200
+  runCount: z.number(), // bumped by GroupsModal.tsx's runGroup() — mirrors a snippet's own runCount, gives a group the same "used" signal
+  lastRunAt: z.string().nullable(), // ISO timestamp, same convention as Snippet.lastRunAt
 });
 export type Group = z.infer<typeof GroupOutputSchema>;
 
 export const GroupSchema = z
   .unknown()
   .transform((raw) => {
-    const g = (raw && typeof raw === 'object' ? raw : {}) as Partial<{ id: unknown; name: unknown; description: unknown; snippetIds: unknown }>;
+    const g = (raw && typeof raw === 'object' ? raw : {}) as Partial<{ id: unknown; name: unknown; description: unknown; snippetIds: unknown; runCount: unknown; lastRunAt: unknown }>;
     const rawIds = Array.isArray(g.snippetIds) ? g.snippetIds : [];
     const snippetIds = [...new Set(rawIds.filter((id): id is string => typeof id === 'string' && Boolean(id)))].slice(0, 200);
     return {
@@ -28,6 +30,8 @@ export const GroupSchema = z
       name: String(g.name ?? '').trim().slice(0, 100),
       description: String(g.description ?? '').trim().slice(0, 500),
       snippetIds,
+      runCount: typeof g.runCount === 'number' && g.runCount >= 0 ? g.runCount : 0,
+      lastRunAt: g.lastRunAt ? String(g.lastRunAt) : null,
     };
   })
   .pipe(GroupOutputSchema);

@@ -9,7 +9,7 @@
 // entirely the caller's responsibility.
 import { execFile } from 'node:child_process';
 import { psQuote } from '../ps-quote';
-import type { ShellType, RunResult } from '@shared/types';
+import type { ShellType, RunResult, SshConfig } from '@shared/types';
 
 const COMMAND_TIMEOUT_MS = 20000;
 const MAX_BUFFER = 5 * 1024 * 1024; // 5 MB
@@ -26,6 +26,10 @@ export const SHELL_CANDIDATES: Record<ShellType, string[]> = {
   wsl: ['wsl.exe'],
   node: ['node.exe', 'node'],
   python: ['python.exe', 'py.exe', 'python'],
+  // Windows 10 1809+ ships OpenSSH's client at this fixed path, but it's
+  // also commonly just on PATH — try both, same "PATH first, known
+  // absolute path as a fallback" shape gitbash already uses above.
+  ssh: ['ssh.exe', 'C:\\Windows\\System32\\OpenSSH\\ssh.exe'],
 };
 
 export interface Invocation {
@@ -33,8 +37,8 @@ export interface Invocation {
   args: string[];
 }
 
-/** Builds the {candidates, args} argv for a non-elevated invocation of `command` under `shellType`. */
-export function buildInvocation(command: string, shellType: ShellType): Invocation {
+/** Builds the {candidates, args} argv for a non-elevated invocation of `command` under `shellType`. `ssh` is only consulted for shellType 'ssh' and `cwd` (normally passed as execFile's own `cwd` option) is folded into the remote command text instead, since a local `cwd` option has no meaning for a process that isn't actually spawned on this machine. */
+export function buildInvocation(command: string, shellType: ShellType, ssh: SshConfig | null = null, cwd: string | null = null): Invocation {
   switch (shellType) {
     case 'cmd':
       return { candidates: SHELL_CANDIDATES.cmd, args: ['/d', '/s', '/c', `chcp 65001 > nul && ${command}`] };
@@ -46,6 +50,24 @@ export function buildInvocation(command: string, shellType: ShellType): Invocati
       return { candidates: SHELL_CANDIDATES.node, args: ['-e', command] };
     case 'python':
       return { candidates: SHELL_CANDIDATES.python, args: ['-c', command] };
+    case 'ssh': {
+      if (!ssh || !ssh.host) {
+        // No real ssh config — fail via the normal ENOENT-style "could not
+        // find/use" path rather than throwing, same as every other shell's
+        // own missing-prerequisite story.
+        return { candidates: [], args: [] };
+      }
+      const remoteCommand = cwd ? `cd '${cwd.replace(/'/g, `'\\''`)}' && ${command}` : command;
+      const args = [
+        '-o', 'BatchMode=yes', // never blocks on an interactive password/host-key prompt — fail fast instead of hanging a run forever
+        '-o', 'StrictHostKeyChecking=accept-new',
+        '-p', String(ssh.port),
+        ...(ssh.identityFile ? ['-i', ssh.identityFile] : []),
+        `${ssh.username ? `${ssh.username}@` : ''}${ssh.host}`,
+        remoteCommand,
+      ];
+      return { candidates: SHELL_CANDIDATES.ssh, args };
+    }
     default: {
       // Force UTF-8 console/output encoding inside the PowerShell session so
       // pipes, aliases and Cyrillic output come back decoded correctly.
@@ -68,6 +90,7 @@ export interface RunShellCommandOptions {
   env?: Record<string, string> | null;
   stdin?: string | null;
   debug?: boolean;
+  ssh?: SshConfig | null;
 }
 
 /**
@@ -76,11 +99,15 @@ export interface RunShellCommandOptions {
  * aliases, and Cyrillic text render correctly.
  */
 export function runShellCommand(command: string, options: RunShellCommandOptions = {}): Promise<RunResult> {
-  const { cwd, shell: shellType = 'powershell', elevated = false, env = null, stdin = null, debug = false } = options;
+  const { cwd, shell: shellType = 'powershell', elevated = false, env = null, stdin = null, debug = false, ssh = null } = options;
 
   return new Promise((resolve) => {
     if (typeof command !== 'string' || command.trim().length === 0) {
       resolve({ stdout: '', stderr: 'Empty command.', code: 1 });
+      return;
+    }
+    if (shellType === 'ssh' && (!ssh || !ssh.host)) {
+      resolve({ stdout: '', stderr: 'This snippet has no SSH host configured.', code: 1 });
       return;
     }
 
@@ -156,13 +183,16 @@ export function runShellCommand(command: string, options: RunShellCommandOptions
       return;
     }
 
-    const { candidates, args } = buildInvocation(command, shellType);
+    const { candidates, args } = buildInvocation(command, shellType, ssh, cwd || null);
     const execOpts = {
       encoding: 'utf8' as const,
       timeout: COMMAND_TIMEOUT_MS,
       maxBuffer: MAX_BUFFER,
       windowsHide: true,
-      cwd: cwd || undefined,
+      // For ssh, `cwd` is folded into the remote command text by
+      // buildInvocation() above (a local execFile `cwd` would just change
+      // where the LOCAL ssh.exe process starts, not the remote shell).
+      cwd: shellType === 'ssh' ? undefined : cwd || undefined,
       env: mergedEnv,
     };
 

@@ -6,10 +6,13 @@
 // is local component state, refreshed each time the modal opens, same as
 // the original's openSettings().
 import { useEffect, useRef, useState } from 'react';
-import { Copy, Check, RefreshCw, Trash2, BookMarked } from 'lucide-react';
-import type { TriggerConfig, Library } from '@shared/types';
+import { ArrowLeft, Copy, Check, RefreshCw, Trash2, BookMarked, FolderOpen, Palette, SlidersHorizontal, Webhook, Database, HelpCircle } from 'lucide-react';
+import type { TriggerConfig, Library, WatchTrigger, Snippet } from '@shared/types';
+import { ThemedSelect } from '../shared/ThemedSelect';
+import { SnippetPickerField } from '../shared/SnippetPicker';
+import { newId, extractPlaceholders, runnableTextOf } from '../../lib/utils';
 import { useUiStore, type Theme, type Density } from '../../store/useUiStore';
-import { useSettingsStore, closeSettings } from '../../store/useSettingsStore';
+import { useSettingsStore, closeSettings, type SettingsCategory } from '../../store/useSettingsStore';
 import { playTone } from '../../lib/appearance';
 import { showToast } from '../../lib/toast';
 import { state } from '../../../modules/state';
@@ -207,11 +210,9 @@ function BehaviorSection() {
         <span>Show a desktop notification when a command finishes in the background</span>
       </label>
 
-      <label className="checkbox-row" htmlFor="devModeToggle">
+      <label className="checkbox-row" htmlFor="devModeToggle" title="Show the exact command/args sent to the OS for each run">
         <input type="checkbox" id="devModeToggle" checked={ui.devModeEnabled} onChange={(e) => ui.setDevModeEnabled(e.target.checked)} />
-        <span>
-          Developer mode <span className="field-hint">(show the exact command/args sent to the OS for each run)</span>
-        </span>
+        <span>Developer mode</span>
       </label>
     </div>
   );
@@ -504,6 +505,106 @@ function LibrariesSection() {
   );
 }
 
+function WatchTriggerRow({ trigger, snippets, onChange, onRemove }: { trigger: WatchTrigger; snippets: Snippet[]; onChange: (patch: Partial<WatchTrigger>) => void; onRemove: () => void }) {
+  const targetSnippet = snippets.find((s) => s.id === trigger.snippetId);
+  const placeholderNames = targetSnippet ? extractPlaceholders(runnableTextOf(targetSnippet)) : [];
+
+  function setParamValue(name: string, value: string) {
+    const next = { ...(trigger.paramValues || {}) };
+    if (value) next[name] = value;
+    else delete next[name];
+    onChange({ paramValues: Object.keys(next).length > 0 ? next : null });
+  }
+
+  return (
+    <div className="group-row watch-trigger-row">
+      <div className="group-row-info">
+        <label className="checkbox-row">
+          <input type="checkbox" checked={trigger.enabled} onChange={(e) => onChange({ enabled: e.target.checked })} />
+          <span className="watch-trigger-path" title={trigger.path}>{trigger.path || '(no path chosen)'}</span>
+        </label>
+        <div className="watch-trigger-fields">
+          <SnippetPickerField value={trigger.snippetId} onChange={(snippetId) => onChange({ snippetId })} snippets={snippets} />
+        </div>
+        {placeholderNames.length > 0 && (
+          <div className="env-list">
+            {placeholderNames.map((name) => (
+              <div className="env-row" key={name}>
+                <span className="schedule-param-name">{`{{${name}}}`}</span>
+                <input
+                  type="text"
+                  className="field-input env-value-input"
+                  placeholder="uses a global variable if left blank"
+                  value={trigger.paramValues?.[name] || ''}
+                  onChange={(e) => setParamValue(name, e.target.value)}
+                />
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      <button
+        type="button"
+        className="btn btn-small"
+        title="Choose a file or folder"
+        onClick={async () => {
+          const res = await window.electronAPI.pickWatchPath();
+          if (res.ok && res.path) onChange({ path: res.path });
+        }}
+      >
+        <FolderOpen size={12} />
+      </button>
+      <button type="button" className="btn btn-small btn-danger" onClick={onRemove}>
+        <Trash2 size={12} />
+      </button>
+    </div>
+  );
+}
+
+function WatchTriggersSection() {
+  const [triggers, setTriggers] = useState<WatchTrigger[]>([]);
+
+  useEffect(() => {
+    window.electronAPI.getWatchTriggers().then(setTriggers);
+  }, []);
+
+  async function persist(next: WatchTrigger[]) {
+    setTriggers(next);
+    await window.electronAPI.saveWatchTriggers(next);
+  }
+
+  return (
+    <div className="settings-section">
+      <div className="settings-section-title">File-watch triggers</div>
+      <p className="field-hint">Run a snippet automatically whenever a chosen file or folder changes — a rebuild-on-save, for example.</p>
+      {triggers.length > 0 && (
+        <div className="groups-list" style={{ marginBottom: 8 }}>
+          {triggers.map((t) => (
+            <WatchTriggerRow
+              key={t.id}
+              trigger={t}
+              snippets={state.snippets as Snippet[]}
+              onChange={(patch) => persist(triggers.map((x) => (x.id === t.id ? { ...x, ...patch } : x)))}
+              onRemove={() => persist(triggers.filter((x) => x.id !== t.id))}
+            />
+          ))}
+        </div>
+      )}
+      <button
+        type="button"
+        className="btn btn-small"
+        onClick={async () => {
+          const res = await window.electronAPI.pickWatchPath();
+          if (!res.ok || !res.path) return;
+          await persist([...triggers, { id: newId('watch'), path: res.path, snippetId: '', debounceMs: 800, enabled: true, paramValues: null }]);
+        }}
+      >
+        + Add file-watch trigger
+      </button>
+    </div>
+  );
+}
+
 function DataSection() {
   const [launchOnStartup, setLaunchOnStartup] = useState(false);
 
@@ -567,27 +668,224 @@ function DataSection() {
   );
 }
 
+interface HelpTopic {
+  id: string;
+  title: string;
+  summary: string;
+  steps: string[];
+}
+
+// The actual documentation solution item #5 asked for, beyond a tooltip on
+// each control: one place gathering what every non-obvious feature does and
+// the exact steps to turn it on, written against the real button/menu labels
+// so it stays a literal walkthrough rather than a vague description. Kept as
+// data (not JSX) so an accordion can render every topic identically instead
+// of hand-writing the same <details> markup ten times over.
+const HELP_TOPICS: HelpTopic[] = [
+  {
+    id: 'groups',
+    title: 'Groups',
+    summary: 'Save a set of snippets once, then run them all together on demand — no reselecting every time.',
+    steps: [
+      'Open Groups from the header icon (or "Open Groups" in the command palette, Ctrl+K).',
+      'Click "+ New group", give it a name and an optional description.',
+      'Check every snippet that belongs in the group — use the filter box above the list if you have more than a handful.',
+      'Save. The card now shows which snippets are in it and a Run/Edit/Duplicate row.',
+      'Click "Run" — pick sequential or parallel and hit go, same run-configuration screen a manual batch run uses.',
+    ],
+  },
+  {
+    id: 'pipelines',
+    title: 'Pipelines',
+    summary: 'A branching graph of existing snippets — run different steps depending on whether the previous one succeeded.',
+    steps: [
+      'Open Pipelines from the header icon, "+ New pipeline".',
+      'Use the toolbar\'s left group (Snippet / Delay / Gate / Sub-pipeline) to place steps on the canvas.',
+      'Drag from a step\'s right-hand dot onto another step\'s left-hand dot to connect them — or select a step and use "Connect to…" in the inspector if a precise drag is fiddly.',
+      'Click a connection\'s pill label to choose its condition (success / failure / always / exit code / output contains).',
+      'Click a step to open the inspector: "Change step…" swaps its snippet, "Edit snippet…" opens that snippet\'s own settings directly, "Duplicate" copies it.',
+      'Use "Auto-arrange" to lay everything out neatly, then Run — the canvas stays open and paints each step\'s live status as it runs.',
+      'Optional: the toolbar\'s "Settings" button lets the whole pipeline run on its own schedule, and caps how many branches run at once.',
+    ],
+  },
+  {
+    id: 'variables',
+    title: 'Global variables',
+    summary: 'Give a value a name once, and it pre-fills any {{name}} placeholder that matches, across every snippet.',
+    steps: [
+      'Open Settings → Data → "Manage variables…".',
+      'Click "+ Add variable", type a name (matching the {{name}} used inside a snippet) and its value.',
+      'Toggle the eye icon to mark it secret — its value is then encrypted at rest and hidden in the UI.',
+      'Toggle the link icon to compute the value by running a snippet instead of typing it by hand — pick a source snippet and whether it refreshes manually or on an interval.',
+      'From now on, running any snippet with a matching {{name}} pre-fills it automatically — including unattended runs (scheduled, triggered, file-watch, pipeline steps), which resolve against these same saved variables instead of failing.',
+    ],
+  },
+  {
+    id: 'schedule',
+    title: 'Scheduling a snippet',
+    summary: 'Run a snippet automatically on an interval, daily at a set time, or on a cron expression.',
+    steps: [
+      'Open a snippet\'s editor, turn on "Run on a schedule".',
+      'Pick Interval / Daily / Cron and fill in its one field.',
+      'Save — the Schedule screen (header icon) now lists it, soonest-due first, with an Edit/Run now action on each row.',
+      'A scheduled snippet with an unresolved {{placeholder}} pulls its value from a matching saved global variable instead of failing — see "Global variables" above.',
+    ],
+  },
+  {
+    id: 'triggers',
+    title: 'HTTP triggers',
+    summary: 'Run a snippet from outside the launcher — a scheduled task, a CI job, another script — with a local HTTP call.',
+    steps: [
+      'Settings → Automation → enable the trigger server.',
+      'Copy the token (and the example URL, prefilled with the port and token).',
+      'POST that URL with a real snippet id in place of <snippetId> — copy the id from the snippet\'s Details panel.',
+      'Loopback-only by design (127.0.0.1) — never reachable from another machine.',
+    ],
+  },
+  {
+    id: 'file-watch',
+    title: 'File-watch triggers',
+    summary: 'Run a snippet automatically whenever a chosen file or folder changes — a rebuild-on-save, for example.',
+    steps: [
+      'Settings → Automation → "+ Add file-watch trigger", pick a path.',
+      'Pick which snippet to run when that path changes, using the same snippet picker every other "pick a snippet" field uses.',
+      'Adjust the debounce if the watched path changes in quick bursts (a build tool writing several files at once, for example).',
+      'Like every other unattended path, an unresolved {{placeholder}} is filled from a saved global variable rather than failing the run.',
+    ],
+  },
+  {
+    id: 'background',
+    title: 'Background / long-running processes',
+    summary: 'Start/Stop/Restart controls instead of Run — for dev servers, `docker compose up`, `tail -f`, watchers.',
+    steps: [
+      'In a snippet\'s editor (single-command only), turn on "Run in background".',
+      'Its card now shows Start/Stop instead of Run, streaming live output as it happens.',
+      'Turn on "Restart automatically on crash" if the process should recover itself (capped at 5 restarts before giving up).',
+      'Stopping — or quitting the app — always kills the whole process tree, not just the top-level shell, so nothing keeps running invisibly.',
+    ],
+  },
+  {
+    id: 'templates',
+    title: 'Generate variants (templates)',
+    summary: 'Turn one parameterized snippet into several concrete copies at once, instead of running it once per value by hand.',
+    steps: [
+      'Right-click a snippet that has at least one {{placeholder}} → "Generate variants…".',
+      'Enter one value per line for each placeholder you want to vary.',
+      'Review the count, then create — each combination becomes its own real, ready-to-run snippet.',
+    ],
+  },
+  {
+    id: 'libraries',
+    title: 'Libraries',
+    summary: 'Subscribe to a snippet feed hosted elsewhere and keep a local copy in sync.',
+    steps: [
+      'Settings → Libraries → paste the feed URL, subscribe.',
+      'Its snippets appear in your list with a small badge marking where they came from.',
+      'Re-sync anytime to pull in changes — pins/run counts/last-run on existing rows are kept, only the content updates.',
+      'Removing a subscription deletes every snippet that still traces back to it.',
+    ],
+  },
+  {
+    id: 'batch',
+    title: 'Batch runs & select mode',
+    summary: 'Run several snippets together without saving them as a Group first.',
+    steps: [
+      'Click the checkmark icon in the header to enter select mode, then check the snippets you want.',
+      'Click "Configure & run…" in the bar that appears — same order/mode screen a Group\'s "Run" uses.',
+      'A parameterized snippet with nothing to fill it in is skipped and marked as such, not run with broken text.',
+    ],
+  },
+];
+
+function HelpSection() {
+  return (
+    <div className="settings-section">
+      <div className="settings-section-title">How each feature works</div>
+      <div className="help-topics">
+        {HELP_TOPICS.map((t) => (
+          <details className="help-topic" key={t.id}>
+            <summary>{t.title}</summary>
+            <p className="help-topic-summary">{t.summary}</p>
+            <ol className="help-topic-steps">
+              {t.steps.map((s, i) => (
+                <li key={i}>{s}</li>
+              ))}
+            </ol>
+          </details>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// Categorized instead of one long vertical scroll — a sidebar of tabs, one
+// scrolling pane on the right per category. "Automation" bundles the two
+// sections about running things without a person watching (the HTTP
+// trigger server and file-watch triggers) since they're the same mental
+// category to a user even though they're two separate components/files.
+const SETTINGS_CATEGORIES: { id: SettingsCategory; label: string; icon: typeof Palette }[] = [
+  { id: 'appearance', label: 'Appearance', icon: Palette },
+  { id: 'behavior', label: 'Behavior', icon: SlidersHorizontal },
+  { id: 'automation', label: 'Automation', icon: Webhook },
+  { id: 'updates', label: 'Updates', icon: RefreshCw },
+  { id: 'libraries', label: 'Libraries', icon: BookMarked },
+  { id: 'data', label: 'Data', icon: Database },
+  { id: 'help', label: 'Help', icon: HelpCircle },
+];
+
 export function SettingsModal() {
-  const { open } = useSettingsStore();
+  const { open, initialCategory } = useSettingsStore();
+  const [category, setCategory] = useState<SettingsCategory>(initialCategory);
+  useEffect(() => {
+    if (open) setCategory(initialCategory);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
   if (!open) return null;
 
   return (
-    <div className="modal-overlay" onClick={(e) => { if (e.target === e.currentTarget) closeSettings(); }}>
-      <div className="modal">
-        <h2>Settings</h2>
-        <AppearanceSection />
-        <BehaviorSection />
-        <UpdatesSection />
-        <TriggersSection />
-        <LibrariesSection />
-        <DataSection />
-        <p className="field-hint" style={{ marginTop: 14 }}>
-          Toggle the launcher anytime from the tray icon, or with the hotkey above.
-        </p>
-        <div className="modal-actions">
-          <button type="button" id="closeSettingsBtn" className="btn btn-primary" onClick={closeSettings}>
-            Done
-          </button>
+    <div className="screen">
+      <div className="screen-header">
+        <button type="button" className="icon-btn" title="Back" onClick={closeSettings}>
+          <ArrowLeft size={16} />
+        </button>
+        <div className="screen-header-title">
+          <h2>Settings</h2>
+        </div>
+      </div>
+      <div className="settings-screen-layout">
+        <nav className="settings-nav">
+          {SETTINGS_CATEGORIES.map((c) => (
+            <button
+              type="button"
+              key={c.id}
+              className={'settings-nav-item' + (category === c.id ? ' active' : '')}
+              onClick={() => setCategory(c.id)}
+            >
+              <c.icon size={15} />
+              <span>{c.label}</span>
+            </button>
+          ))}
+        </nav>
+        <div className="settings-panel no-scrollbar">
+          {category === 'appearance' && <AppearanceSection />}
+          {category === 'behavior' && <BehaviorSection />}
+          {category === 'automation' && (
+            <>
+              <TriggersSection />
+              <WatchTriggersSection />
+            </>
+          )}
+          {category === 'updates' && <UpdatesSection />}
+          {category === 'libraries' && <LibrariesSection />}
+          {category === 'data' && (
+            <>
+              <DataSection />
+              <p className="field-hint" style={{ margin: '4px 0 12px' }}>
+                Toggle the launcher anytime from the tray icon, or with the hotkey above.
+              </p>
+            </>
+          )}
+          {category === 'help' && <HelpSection />}
         </div>
       </div>
     </div>

@@ -12,6 +12,7 @@ import { ArrowLeft, RefreshCw, FolderX, Unlink, XCircle, CheckCircle2 } from 'lu
 import type { Snippet, HistoryEntry } from '@shared/types';
 import { snippetIcon } from '../../lib/utils';
 import { useHealthStore, closeHealth } from '../../store/useHealthStore';
+import { InfoHint } from '../shared/InfoHint';
 import { openModal } from '../../store/useEditorStore';
 import { openDetails } from '../../store/useDetailsStore';
 import { state } from '../../../modules/state';
@@ -127,8 +128,9 @@ export function HealthModal() {
           <ArrowLeft size={16} />
         </button>
         <div className="screen-header-title">
-          <h2>Health</h2>
-          <span className="field-hint">Broken working directories, dangling run-before/run-after links, and recently-failing snippets.</span>
+          <h2>
+            Health <InfoHint text="Broken working directories, dangling run-before/run-after links, and recently-failing snippets." />
+          </h2>
         </div>
         <button
           type="button"

@@ -1085,13 +1085,111 @@ kbd {
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 100;
+  /* Deliberately higher than .screen's own z-index (100) — a full-window
+     screen (Health/Schedule/Pipelines/Groups/…) routinely opens a modal on
+     top of itself as a drill-down action (Health's "Fix…"/"Details",
+     Schedule's "Edit", a pipeline step's snippet editor, …). Both used to
+     share z-index 100, so which one painted on top depended on their
+     static JSX order in App.tsx rather than which was opened more
+     recently — a modal opened from an already-open screen silently
+     rendered BEHIND it, looking exactly like the button did nothing. */
+  z-index: 150;
   animation: fade-in 0.15s ease both;
 }
 
 @keyframes fade-in {
   from { opacity: 0; }
   to { opacity: 1; }
+}
+
+/* ---------- Command palette (Ctrl+K, CommandPaletteModal.tsx) ---------- */
+
+.command-palette-overlay {
+  align-items: flex-start;
+  padding-top: 12vh;
+}
+
+.command-palette {
+  width: min(92%, 480px);
+  background: var(--bg-solid);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.command-palette-search-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-tertiary);
+}
+
+.command-palette-input {
+  flex: 1;
+  min-width: 0;
+  background: none;
+  border: none;
+  outline: none;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 13.5px;
+}
+
+.command-palette-list {
+  max-height: 340px;
+  overflow-y: auto;
+  padding: 6px;
+}
+
+.command-palette-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 12.5px;
+  padding: 8px 10px;
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+.command-palette-item.highlighted {
+  background: var(--surface-hover);
+}
+
+.command-palette-item-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.command-palette-item-hint {
+  font-size: 10.5px;
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+}
+
+.command-palette-snippet-icon {
+  font-size: 14px;
+  line-height: 1;
+}
+
+.command-palette-empty {
+  padding: 16px;
+  text-align: center;
+  color: var(--text-tertiary);
+  font-size: 12.5px;
 }
 
 .modal {
@@ -1135,8 +1233,35 @@ kbd {
   flex-shrink: 0;
 }
 
-.pipeline-toolbar-hint {
-  text-align: right;
+.pipeline-toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.pipeline-toolbar-divider {
+  width: 1px;
+  align-self: stretch;
+  background: var(--border);
+  margin: 2px 0;
+}
+
+/* InfoHint.tsx — the app-wide "hover for details" glyph, replacing a
+   permanently-visible field-hint line wherever that line was explaining a
+   screen/control rather than showing a live value. */
+.info-hint {
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-tertiary);
+  cursor: help;
+  vertical-align: middle;
+}
+.info-hint:hover {
+  color: var(--text-secondary);
 }
 
 .pipeline-editor-body {
@@ -1164,7 +1289,7 @@ kbd {
 }
 
 .pipeline-canvas-wrap.pipeline-canvas-empty-hint::after {
-  content: 'Click "+ Add step" to place your first step';
+  content: 'Click "+ Snippet" to place your first step';
   position: absolute;
   left: 20px;
   top: 16px;
@@ -1174,21 +1299,31 @@ kbd {
   z-index: 5;
 }
 
+/* Given a real border + bigger buttons so they read as a distinct control
+   surface floating over the canvas, instead of near-invisibly blending into
+   it — the default React Flow look was too subtle to notice at a glance. */
 .pipeline-flow-controls {
-  box-shadow: var(--shadow);
+  box-shadow: 0 3px 14px rgba(0, 0, 0, 0.3);
+  border: 1.5px solid var(--accent);
+  border-radius: var(--radius-md);
+  overflow: hidden;
 }
 .pipeline-flow-controls button {
+  width: 30px;
+  height: 30px;
   background: var(--bg-solid);
   border-bottom-color: var(--border);
-  fill: var(--text-secondary);
+  fill: var(--text-primary);
 }
 .pipeline-flow-controls button:hover {
-  background: var(--surface-hover);
+  background: var(--accent-soft);
+  fill: var(--accent);
 }
 
 .pipeline-flow-minimap {
   border-radius: var(--radius-sm);
-  box-shadow: var(--shadow);
+  border: 1px solid var(--border-strong);
+  box-shadow: 0 3px 14px rgba(0, 0, 0, 0.3);
   background: var(--bg-solid) !important;
 }
 
@@ -1394,6 +1529,106 @@ kbd {
   margin-top: 20px;
 }
 
+/* ---------- Delay/gate/sub-pipeline nodes (PipelineDelayNode/GateNode/SubPipelineNode.tsx) ----------
+   Deliberately plainer/shorter than .pipeline-step-node — there's no
+   snippet to show an avatar/tag-color/shell for. */
+.pipeline-mini-node {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-sizing: border-box;
+  width: 200px;
+  height: 52px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  padding: 0 12px;
+  cursor: grab;
+  box-shadow: var(--shadow);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+.pipeline-mini-node:active {
+  cursor: grabbing;
+}
+.pipeline-mini-node.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+.pipeline-mini-node span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pipeline-mini-node-delay svg { color: var(--accent-hover); flex-shrink: 0; }
+.pipeline-mini-node-gate svg { color: var(--warning); flex-shrink: 0; }
+.pipeline-mini-node-subpipeline svg { color: var(--text-secondary); flex-shrink: 0; }
+.pipeline-mini-node.broken { border-color: rgba(255, 107, 107, 0.5); }
+
+/* ---------- Live run-status painting (lib/pipelineEngine.ts) ----------
+   Applied directly to React Flow's own rendered node/edge DOM wrappers by
+   id during an interactive run — see that file's header comment on why
+   this stays a direct DOM class toggle rather than a data-driven prop. */
+.react-flow__node.pf-run-active .pipeline-step-node,
+.react-flow__node.pf-run-active .pipeline-mini-node {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+  animation: pf-pulse 1.1s ease-in-out infinite;
+}
+.react-flow__node.pf-run-ok .pipeline-step-node,
+.react-flow__node.pf-run-ok .pipeline-mini-node {
+  border-color: var(--success);
+  box-shadow: 0 0 0 2px var(--success-soft);
+}
+.react-flow__node.pf-run-error .pipeline-step-node,
+.react-flow__node.pf-run-error .pipeline-mini-node {
+  border-color: var(--danger);
+  box-shadow: 0 0 0 2px var(--danger-soft);
+}
+.react-flow__node.pf-run-skipped .pipeline-step-node,
+.react-flow__node.pf-run-skipped .pipeline-mini-node {
+  opacity: 0.55;
+}
+@keyframes pf-pulse {
+  0%, 100% { box-shadow: 0 0 0 2px var(--accent-soft); }
+  50% { box-shadow: 0 0 0 5px var(--accent-soft); }
+}
+.react-flow__edge.pf-edge-walked-yes .react-flow__edge-path { stroke: var(--success) !important; }
+.react-flow__edge.pf-edge-walked-no .react-flow__edge-path { stroke: var(--border) !important; opacity: 0.5; }
+
+/* ---------- Pipeline-level settings panel (schedule + concurrency) ---------- */
+
+.pipeline-toolbar .btn.active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent-hover);
+}
+
+.pipeline-settings-panel {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* ---------- Approval-gate row (BatchModal.tsx's ResultRow, pipeline 'gate' nodes) ---------- */
+
+.batch-gate-icon {
+  color: var(--warning);
+  flex-shrink: 0;
+}
+
+.batch-gate-actions {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
 @keyframes modal-in {
   from { opacity: 0; transform: scale(0.96) translateY(4px); }
   to { opacity: 1; transform: scale(1) translateY(0); }
@@ -1418,6 +1653,19 @@ kbd {
   color: var(--text-tertiary);
   text-transform: none;
   letter-spacing: 0;
+}
+
+/* A field-label that also carries a trailing count (e.g. "3 selected") — see GroupsModal.tsx's editor. */
+.field-label:has(.field-label-count) {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.field-label-count {
+  font-weight: 500;
+  color: var(--text-tertiary);
+  font-size: 11px;
 }
 
 .field-hint code {
@@ -1608,6 +1856,14 @@ select.field-input {
   margin-top: 6px;
 }
 
+.ssh-fields {
+  margin-top: 4px;
+  padding: 10px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
 .env-row {
   display: flex;
   align-items: center;
@@ -1622,6 +1878,17 @@ select.field-input {
 .env-value-input {
   flex: 1;
   font-family: "Cascadia Code", "Consolas", "Courier New", monospace;
+}
+
+/* A fixed placeholder name label (EditorModal's schedule param-values rows, SettingsModal's watch-trigger equivalent) — same column width as .env-key-input, but read-only text rather than an input. */
+.schedule-param-name {
+  flex: 0 0 130px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: "Cascadia Code", "Consolas", "Courier New", monospace;
+  font-size: 12px;
+  color: var(--text-secondary);
 }
 
 /* ---------- Schedule fields ---------- */
@@ -2138,6 +2405,64 @@ select.field-input {
 
 /* ---------- Settings sections ---------- */
 
+/* Settings renders as a full-window .screen (SettingsModal.tsx) rather than
+   a centered .modal, and as a sidebar of category tabs + one scrolling pane
+   (replaces an earlier single long vertical scroll through every section
+   stacked on top of each other) — its own form rows are still comfortable-
+   reading-width content, not something that benefits from stretching
+   edge-to-edge on a wide/resized window, so the whole layout caps its own
+   width and centers. */
+.settings-screen-layout {
+  display: flex;
+  gap: 22px;
+  flex: 1;
+  min-height: 0;
+  max-width: 720px;
+  margin: 0 auto;
+  width: 100%;
+  padding: 4px 16px 16px;
+}
+
+.settings-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 0 0 152px;
+  padding-top: 4px;
+}
+
+.settings-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 10px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.settings-nav-item:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+.settings-nav-item.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.settings-panel {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding-top: 4px;
+}
+
 .settings-section {
   padding-top: 14px;
   margin-top: 14px;
@@ -2146,8 +2471,59 @@ select.field-input {
 
 .settings-section:first-of-type {
   padding-top: 0;
-  margin-top: 4px;
+  margin-top: 0;
   border-top: none;
+}
+
+/* ---------- Settings → Help (SettingsModal.tsx's HELP_TOPICS) ---------- */
+
+.help-topics {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.help-topic {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 9px 12px;
+  background: var(--surface);
+}
+
+.help-topic summary {
+  cursor: pointer;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+  list-style: none;
+}
+.help-topic summary::-webkit-details-marker {
+  display: none;
+}
+.help-topic summary::before {
+  content: '▸';
+  display: inline-block;
+  width: 14px;
+  color: var(--text-tertiary);
+}
+.help-topic[open] summary::before {
+  content: '▾';
+}
+
+.help-topic-summary {
+  margin: 6px 0 8px 14px;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+}
+
+.help-topic-steps {
+  margin: 0 0 2px 30px;
+  padding: 0;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
 .settings-section-title {
@@ -2184,6 +2560,23 @@ select.field-input {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   padding: 8px;
+}
+
+.variable-computed-panel {
+  margin-top: 4px;
+  padding: 10px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.variable-computed-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 2px;
 }
 
 .variable-row input[type="text"],
@@ -2251,6 +2644,9 @@ select.field-input {
 }
 
 .screen-header-title h2 {
+  display: flex;
+  align-items: center;
+  gap: 7px;
   margin: 0;
   font-size: 15px;
 }
@@ -2342,7 +2738,34 @@ select.field-input {
   overflow: hidden;
   display: -webkit-box;
   -webkit-line-clamp: 2;
+  line-clamp: 2;
   -webkit-box-orient: vertical;
+}
+
+.group-card-members {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.group-card-member-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 130px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--surface-hover);
+  border: 1px solid var(--border);
+  font-size: 10.5px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.group-card-member-more {
+  color: var(--text-tertiary);
 }
 
 .group-card-actions {
@@ -2481,6 +2904,25 @@ select.field-input {
   min-width: 0;
 }
 
+.watch-trigger-row {
+  align-items: flex-start;
+}
+
+.watch-trigger-path {
+  font-family: "Cascadia Code", "Consolas", "Courier New", monospace;
+  font-size: 11.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: block;
+  max-width: 320px;
+}
+
+.watch-trigger-fields {
+  margin: 6px 0 0 24px;
+  max-width: 260px;
+}
+
 .group-row-name {
   font-size: 13px;
   font-weight: 600;
@@ -2503,6 +2945,15 @@ select.field-input {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* SnippetMultiPickerList (SnippetPicker.tsx) — reuses .pipeline-picker-search/
+   -tags/-tag-chip (below) for its search box + tag chips, and
+   .group-snippet-checklist/.group-checklist-row (this block) for the
+   checkbox list itself; this wrapper just stacks the three. */
+.snippet-multi-picker {
+  display: flex;
+  flex-direction: column;
 }
 
 .group-snippet-checklist {
@@ -2807,6 +3258,40 @@ select.field-input {
    "Change step…", "Connect to…"): a search box + optional tag-chip row,
    both fixed, above a separately-scrolling item list — only .pipeline-picker-list
    scrolls, so the search/filter controls stay put while you scroll results. */
+/* ---------- SnippetPickerField (SnippetPicker.tsx) — a "pick one snippet" field reused wherever a single snippet needs picking (file-watch triggers, computed variables, …), instead of a plain <select> ---------- */
+
+.snippet-picker-field-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.snippet-picker-field-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+}
+
+.snippet-picker-field-clear {
+  flex-shrink: 0;
+  padding: 0;
+  width: 28px;
+  height: 28px;
+  font-size: 15px;
+  line-height: 1;
+}
+
+.snippet-picker-field-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+}
+
 .pipeline-picker-menu {
   display: flex;
   flex-direction: column;

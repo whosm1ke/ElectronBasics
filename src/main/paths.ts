@@ -12,3 +12,4 @@ export const VARIABLES_FILE = path.join(USER_DATA, 'variables.json');
 export const GROUPS_FILE = path.join(USER_DATA, 'groups.json');
 export const PIPELINES_FILE = path.join(USER_DATA, 'pipelines.json');
 export const LIBRARIES_FILE = path.join(USER_DATA, 'libraries.json');
+export const WATCH_TRIGGERS_FILE = path.join(USER_DATA, 'watch-triggers.json');

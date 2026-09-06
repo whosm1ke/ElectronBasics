@@ -21,6 +21,7 @@
 import { z } from 'zod';
 import { newId } from '../id';
 import { VALID_SHELLS, type ShellType } from './shell';
+import { ParamValuesSchema, sanitizeParamValues } from './paramValues';
 
 // ---------- EnvVar ----------
 
@@ -47,6 +48,61 @@ export const EnvVarListSchema = z
     return cleaned.length ? cleaned : null;
   })
   .pipe(EnvVarListOutputSchema);
+
+// ---------- Capture ----------
+
+export const CaptureSchema = z.object({
+  variable: z.string(), // trimmed, <=100 chars, non-empty (CaptureListSchema drops empty-variable entries)
+  pattern: z.string(), // <=500 chars — a JS regex; group 1 if present, else the whole match
+});
+export type Capture = z.infer<typeof CaptureSchema>;
+
+const CaptureListOutputSchema = z.array(CaptureSchema).nullable();
+
+/** A snippet's `captures` field: null unless there's at least one entry with a non-empty variable name, capped at 10. */
+export const CaptureListSchema = z
+  .unknown()
+  .transform((raw): Capture[] | null => {
+    if (!Array.isArray(raw)) return null;
+    const cleaned = raw
+      .map((c) => ({
+        variable: String((c && (c as Record<string, unknown>).variable) ?? '').trim().slice(0, 100),
+        pattern: String((c && (c as Record<string, unknown>).pattern) ?? '').slice(0, 500),
+      }))
+      .filter((c) => c.variable && c.pattern)
+      .slice(0, 10);
+    return cleaned.length ? cleaned : null;
+  })
+  .pipe(CaptureListOutputSchema);
+
+// ---------- SshConfig ----------
+
+export const SshConfigSchema = z.object({
+  host: z.string(), // <=255 chars
+  port: z.number(), // 1-65535
+  username: z.string(), // <=100 chars
+  identityFile: z.string().nullable(), // path to a private key, optional (falls back to ssh's own default/agent)
+});
+export type SshConfig = z.infer<typeof SshConfigSchema>;
+
+const SshOutputSchema = SshConfigSchema.nullable();
+
+/** A snippet's `ssh` field: null unless the raw value is a real object; every sub-field gets its own documented default, same backfill spirit as ScheduleSchema below. */
+export const SshSchema = z
+  .unknown()
+  .transform((raw): SshConfig | null => {
+    if (!raw || typeof raw !== 'object') return null;
+    const s = raw as Record<string, unknown>;
+    const host = String(s.host ?? '').trim().slice(0, 255);
+    if (!host) return null; // an ssh config with no host is meaningless — treat it as absent
+    return {
+      host,
+      port: Number.isFinite(s.port) ? Math.min(65535, Math.max(1, Math.round(s.port as number))) : 22,
+      username: String(s.username ?? '').trim().slice(0, 100),
+      identityFile: s.identityFile ? String(s.identityFile).slice(0, 1000) : null,
+    };
+  })
+  .pipe(SshOutputSchema);
 
 // ---------- ExpectConfig ----------
 
@@ -83,6 +139,11 @@ export const ScheduleConfigSchema = z.object({
   dailyTime: z.string(), // "HH:MM", validated by /^\d{2}:\d{2}$/
   cronExpr: z.string(), // 5-field cron, <=100 chars
   lastRunAt: z.string().nullable(), // ISO timestamp
+  // Fixed {{placeholder}} -> value overrides for THIS schedule specifically —
+  // see paramValues.ts's header comment. Checked before falling back to a
+  // saved global variable, so a scheduled run doesn't have to make its
+  // values globally visible/shared just to avoid being skipped.
+  paramValues: ParamValuesSchema,
 });
 export type ScheduleConfig = z.infer<typeof ScheduleConfigSchema>;
 
@@ -102,6 +163,7 @@ export const ScheduleSchema = z
       dailyTime: /^\d{2}:\d{2}$/.test((s.dailyTime as string) || '') ? (s.dailyTime as string) : '09:00',
       cronExpr: typeof s.cronExpr === 'string' && s.cronExpr.trim() ? s.cronExpr.trim().slice(0, 100) : '*/15 * * * *',
       lastRunAt: s.lastRunAt ? String(s.lastRunAt) : null,
+      paramValues: sanitizeParamValues(s.paramValues),
     };
   })
   .pipe(ScheduleOutputSchema);
@@ -138,6 +200,13 @@ const SnippetOutputSchema = z.object({
   // badge it and a re-sync can find its own previously-imported snippets
   // again (see libraries.ts's syncLibrary for the id-matching scheme).
   externalSource: z.string().nullable(),
+  // Extracts a value out of this run's combined output straight into a
+  // global variable — see @shared/captures.ts's extractCaptures(), applied
+  // by both runEngine.ts (manual runs) and unattendedRun.ts (scheduled/
+  // triggered runs).
+  captures: CaptureListOutputSchema,
+  // Only meaningful when shell === 'ssh' — see shell/exec.ts's buildInvocation.
+  ssh: SshOutputSchema,
 });
 export type Snippet = z.infer<typeof SnippetOutputSchema>;
 
@@ -176,6 +245,8 @@ export const SnippetSchema = z
       background: Boolean(s.background) && !(steps && steps.length > 0),
       autoRestart: Boolean(s.autoRestart),
       externalSource: s.externalSource ? String(s.externalSource).slice(0, 1000) : null,
+      captures: CaptureListSchema.parse(s.captures),
+      ssh: SshSchema.parse(s.ssh),
     };
   })
   .pipe(SnippetOutputSchema);

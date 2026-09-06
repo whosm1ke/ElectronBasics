@@ -20,17 +20,19 @@
 // at save time, which isn't something a static per-field schema can check,
 // and turning them into zod rules would be new scope beyond porting the
 // form's own state management.
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useForm, useFieldArray, Controller, type SubmitHandler } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { Trash2 } from 'lucide-react';
 import type { ShellType, ScheduleType, Snippet, EnvVar } from '@shared/types';
 import { VALID_SHELLS, VALID_SCHEDULE_TYPES } from '@shared/types';
-import { newId, findDependencyCycle, snippetIcon } from '../../lib/utils';
+import { newId, findDependencyCycle, extractPlaceholders } from '../../lib/utils';
 import { showToast } from '../../lib/toast';
 import { ThemedSelect } from '../shared/ThemedSelect';
-import { ThemedCombobox, type ComboboxOption } from '../shared/ThemedCombobox';
+import { ThemedCombobox } from '../shared/ThemedCombobox';
+import { SnippetPickerField } from '../shared/SnippetPicker';
+import { InfoHint } from '../shared/InfoHint';
 import { useEditorStore, closeModal } from '../../store/useEditorStore';
 import { state, ICON_PRESETS } from '../../../modules/state';
 import { persistSnippets } from '../../lib/snippetsStore';
@@ -42,6 +44,7 @@ const SHELL_OPTIONS: { value: ShellType; label: string }[] = [
   { value: 'wsl', label: 'WSL' },
   { value: 'node', label: 'Node.js' },
   { value: 'python', label: 'Python' },
+  { value: 'ssh', label: 'SSH' },
 ];
 
 // The form's own working shape — deliberately not the same as the persisted
@@ -70,10 +73,15 @@ const FormSchema = z
     stdinEnabled: z.boolean(),
     stdin: z.string(),
     env: z.array(z.object({ key: z.string(), value: z.string() })),
+    captures: z.array(z.object({ variable: z.string(), pattern: z.string() })),
+    sshHost: z.string(),
+    sshPort: z.string(),
+    sshUsername: z.string(),
+    sshIdentityFile: z.string(),
     expectExitCode: z.string(),
     expectOutput: z.string(),
-    runAfterInput: z.string(),
-    runBeforeInput: z.string(),
+    runAfterId: z.string(),
+    runBeforeId: z.string(),
     scheduleEnabled: z.boolean(),
     scheduleType: z.enum(VALID_SCHEDULE_TYPES),
     intervalMinutes: z.string(),
@@ -95,12 +103,6 @@ const FormSchema = z
 
 type FormValues = z.infer<typeof FormSchema>;
 
-/** Two snippets can share a name (nothing enforces uniqueness) — disambiguated with its tag when that happens, same as the original. */
-function displayTextFor(snippet: Snippet, candidates: Snippet[]): string {
-  const isAmbiguous = candidates.filter((s) => s.name === snippet.name).length > 1;
-  return isAmbiguous ? `${snippet.name} (${snippet.tag})` : snippet.name;
-}
-
 function emptyForm(): FormValues {
   return {
     icon: '', name: '', tag: '', cwd: '', shell: 'powershell', elevated: false, notes: '',
@@ -108,16 +110,21 @@ function emptyForm(): FormValues {
     background: false, autoRestart: false,
     stdinEnabled: false, stdin: '',
     env: [],
+    captures: [],
+    sshHost: '', sshPort: '22', sshUsername: '', sshIdentityFile: '',
     expectExitCode: '', expectOutput: '',
-    runAfterInput: '', runBeforeInput: '',
+    runAfterId: '', runBeforeId: '',
     scheduleEnabled: false, scheduleType: 'interval', intervalMinutes: '60', dailyTime: '09:00', cronExpr: '*/15 * * * *',
   };
 }
 
 function formFromSnippet(snippet: Snippet, candidates: Snippet[]): FormValues {
   const hasSteps = Boolean(snippet.steps && snippet.steps.length);
-  const afterTarget = snippet.runAfterThis ? candidates.find((s) => s.id === snippet.runAfterThis) : null;
-  const beforeTarget = snippet.runBefore ? candidates.find((s) => s.id === snippet.runBefore) : null;
+  // Only keep the reference if its target still actually exists among the
+  // candidates (self excluded) — a stale id from a deleted snippet should
+  // show as "not set," not silently persist forward on the next save.
+  const runAfterId = snippet.runAfterThis && candidates.some((s) => s.id === snippet.runAfterThis) ? snippet.runAfterThis : '';
+  const runBeforeId = snippet.runBefore && candidates.some((s) => s.id === snippet.runBefore) ? snippet.runBefore : '';
   return {
     icon: snippet.icon || '',
     name: snippet.name,
@@ -135,29 +142,21 @@ function formFromSnippet(snippet: Snippet, candidates: Snippet[]): FormValues {
     stdinEnabled: Boolean(snippet.stdin),
     stdin: snippet.stdin || '',
     env: snippet.env || [],
+    captures: snippet.captures || [],
+    sshHost: snippet.ssh?.host || '',
+    sshPort: String(snippet.ssh?.port || 22),
+    sshUsername: snippet.ssh?.username || '',
+    sshIdentityFile: snippet.ssh?.identityFile || '',
     expectExitCode: snippet.expect && snippet.expect.exitCode !== null ? String(snippet.expect.exitCode) : '',
     expectOutput: (snippet.expect && snippet.expect.outputContains) || '',
-    runAfterInput: afterTarget ? displayTextFor(afterTarget, candidates) : '',
-    runBeforeInput: beforeTarget ? displayTextFor(beforeTarget, candidates) : '',
+    runAfterId,
+    runBeforeId,
     scheduleEnabled: Boolean(snippet.schedule && snippet.schedule.enabled),
     scheduleType: (snippet.schedule && snippet.schedule.type) || 'interval',
     intervalMinutes: String((snippet.schedule && snippet.schedule.intervalMinutes) || 60),
     dailyTime: (snippet.schedule && snippet.schedule.dailyTime) || '09:00',
     cronExpr: (snippet.schedule && snippet.schedule.cronExpr) || '*/15 * * * *',
   };
-}
-
-/** Resolves a Run before/after input's typed text back to a snippet id, tolerating a case mismatch (hand-typed rather than picked from the datalist); toasts and returns null for unrecognized text. */
-function resolveSnippetRef(typed: string, nameToId: Map<string, string>, fieldLabel: string): string | null {
-  const trimmed = typed.trim();
-  if (!trimmed) return null;
-  if (nameToId.has(trimmed)) return nameToId.get(trimmed)!;
-  const lower = trimmed.toLowerCase();
-  for (const [text, id] of nameToId) {
-    if (text.toLowerCase() === lower) return id;
-  }
-  showToast(`"${trimmed}" doesn't match any snippet — ${fieldLabel} left empty`, 'error');
-  return null;
 }
 
 export function EditorModal() {
@@ -173,6 +172,15 @@ export function EditorModal() {
   } = useForm<FormValues>({ resolver: zodResolver(FormSchema), defaultValues: emptyForm() });
   const stepsArray = useFieldArray({ control, name: 'steps' });
   const envArray = useFieldArray({ control, name: 'env' });
+  const capturesArray = useFieldArray({ control, name: 'captures' });
+
+  // Fixed {{placeholder}} -> value overrides for THIS snippet's own
+  // schedule (see @shared/types/paramValues.ts) — not a react-hook-form
+  // field since its row set tracks whatever placeholders are actually
+  // typed into command/steps right now, not a fixed-shape array the way
+  // env/captures are. Keyed by placeholder name; a name with no entry (or
+  // a blank one) falls back to a matching saved global variable at run time.
+  const [scheduleParamValues, setScheduleParamValues] = useState<Record<string, string>>({});
 
   const snippets = state.snippets as Snippet[];
   const editingSnippet = editingId ? snippets.find((s) => s.id === editingId) : null;
@@ -181,6 +189,7 @@ export function EditorModal() {
   useEffect(() => {
     if (!open) return;
     reset(editingSnippet ? formFromSnippet(editingSnippet, candidates) : emptyForm());
+    setScheduleParamValues(editingSnippet?.schedule?.paramValues || {});
     setTimeout(() => document.getElementById('newName')?.focus(), 0);
     // Only reset when the modal transitions open/closed or which snippet is
     // being edited changes — not on every candidates/editingSnippet
@@ -191,15 +200,6 @@ export function EditorModal() {
   if (!open) return null;
 
   const tags = Array.from(new Set(snippets.map((s) => s.tag))).sort();
-  const runAfterNameToId = new Map(candidates.map((s) => [displayTextFor(s, candidates), s.id]));
-  const runBeforeNameToId = runAfterNameToId; // same candidate set, same display text
-  // Shared by both run-after/run-before combobox fields — same candidate
-  // set, same display text (the actual value stored/resolved), just an icon
-  // prefix on the label for a quicker visual scan.
-  const runRefOptions: ComboboxOption[] = candidates.map((s) => {
-    const text = displayTextFor(s, candidates);
-    return { value: text, filterText: text, label: <>{snippetIcon(s)} {text}</> };
-  });
 
   const multiStep = watch('multiStep');
   const shell = watch('shell');
@@ -207,6 +207,12 @@ export function EditorModal() {
   const stdinEnabled = watch('stdinEnabled');
   const scheduleEnabled = watch('scheduleEnabled');
   const scheduleType = watch('scheduleType');
+  const watchedCommand = watch('command');
+  const watchedSteps = watch('steps');
+  // Union of both, regardless of the multiStep toggle's current position —
+  // simpler than branching on `multiStep` here, and harmless: whichever
+  // field isn't actually used at submit time just contributes no names.
+  const schedulePlaceholderNames = extractPlaceholders([watchedCommand, ...watchedSteps.map((s) => s.value)].join('\n'));
   // A superRefine issue on the whole `steps` array (path: ['steps'], not
   // ['steps', i, ...]) lands at errors.steps.root, not errors.steps.message
   // directly — RHF's FieldErrors shape for a useFieldArray'd field reserves
@@ -233,13 +239,17 @@ export function EditorModal() {
     }
 
     const env = data.env.map((e) => ({ key: e.key.trim(), value: e.value })).filter((e) => e.key);
+    const captures = data.captures.map((c) => ({ variable: c.variable.trim(), pattern: c.pattern.trim() })).filter((c) => c.variable && c.pattern);
+    const ssh = shell === 'ssh' && data.sshHost.trim()
+      ? { host: data.sshHost.trim(), port: Number(data.sshPort) || 22, username: data.sshUsername.trim(), identityFile: data.sshIdentityFile.trim() || null }
+      : null;
 
     const expectExitVal = data.expectExitCode.trim();
     const expectOutVal = data.expectOutput.trim();
     const expect = expectExitVal !== '' || expectOutVal ? { exitCode: expectExitVal !== '' ? Number(expectExitVal) : null, outputContains: expectOutVal || null } : null;
 
-    const runAfterThis = resolveSnippetRef(data.runAfterInput, runAfterNameToId, '"Run after this one"');
-    const runBefore = resolveSnippetRef(data.runBeforeInput, runBeforeNameToId, '"Run before this one"');
+    const runAfterThis = data.runAfterId || null;
+    const runBefore = data.runBeforeId || null;
     const stopOnStepError = data.stopOnStepError;
 
     // A brand-new snippet can never be part of a cycle (nothing existing can
@@ -255,6 +265,11 @@ export function EditorModal() {
     }
 
     const existingSchedule = editingId ? snippets.find((s) => s.id === editingId)?.schedule : null;
+    // Only keep an override for a placeholder this snippet's final command
+    // actually uses, with a non-blank value — a blank row means "fall back
+    // to a global variable," not "set it to the empty string."
+    const finalPlaceholderNames = extractPlaceholders(command);
+    const paramValuesEntries = Object.entries(scheduleParamValues).filter(([k, v]) => finalPlaceholderNames.includes(k) && v.trim() !== '');
     const schedule = data.scheduleEnabled
       ? {
           enabled: true,
@@ -263,13 +278,14 @@ export function EditorModal() {
           dailyTime: data.dailyTime || '09:00',
           cronExpr: data.cronExpr.trim() || '*/15 * * * *',
           lastRunAt: existingSchedule ? existingSchedule.lastRunAt : null,
+          paramValues: paramValuesEntries.length > 0 ? Object.fromEntries(paramValuesEntries) : null,
         }
       : null;
 
     const backgroundFlag = data.background && !steps;
     const autoRestart = backgroundFlag && data.autoRestart;
 
-    const fields = { name, tag, command, steps, cwd, shell, elevated, icon, notes, stdin, env, expect, runAfterThis, runBefore, stopOnStepError, schedule, background: backgroundFlag, autoRestart };
+    const fields = { name, tag, command, steps, cwd, shell, elevated, icon, notes, stdin, env, expect, runAfterThis, runBefore, stopOnStepError, schedule, background: backgroundFlag, autoRestart, captures: captures.length ? captures : null, ssh };
 
     if (editingId) {
       const target = snippets.find((s) => s.id === editingId);
@@ -338,19 +354,13 @@ export function EditorModal() {
               },
             })}
           />
-          <span>
-            Multi-step sequence <span className="field-hint">(runs each step in order, shows per-step results)</span>
-          </span>
+          <span title="Runs each step in order, shows per-step results">Multi-step sequence</span>
         </label>
 
         {!multiStep ? (
           <div>
-            <label className="field-label" htmlFor="newCommand">
+            <label className="field-label" htmlFor="newCommand" title="Use {{name}} for a value you'll fill in before each run">
               Command
-              <span className="field-hint">
-                {' '}
-                — use <code>{'{{name}}'}</code> for a value you'll fill in before each run
-              </span>
             </label>
             <textarea id="newCommand" className={'field-textarea' + (errors.command ? ' field-invalid' : '')} rows={4} placeholder="Test-NetConnection {{host}}" {...register('command')} />
             {errors.command && <span className="field-error">{errors.command.message}</span>}
@@ -379,19 +389,17 @@ export function EditorModal() {
             <button type="button" className="btn btn-ghost btn-small" onClick={() => stepsArray.append({ value: '' })}>
               + Add step
             </button>
-            <label className="checkbox-row" htmlFor="stopOnStepErrorToggle">
+            <label className="checkbox-row" htmlFor="stopOnStepErrorToggle" title="Otherwise every step runs regardless">
               <input type="checkbox" id="stopOnStepErrorToggle" {...register('stopOnStepError')} />
-              <span>
-                Stop if a step fails <span className="field-hint">(otherwise every step runs regardless)</span>
-              </span>
+              <span>Stop if a step fails</span>
             </label>
           </div>
         )}
 
         <div className="field-row">
           <div className="field-col">
-            <label className="field-label" htmlFor="newCwd">
-              Working directory <span className="field-hint">(optional)</span>
+            <label className="field-label" htmlFor="newCwd" title="Optional">
+              Working directory
             </label>
             <input type="text" id="newCwd" className="field-input" placeholder="C:\Projects\my-app" autoComplete="off" {...register('cwd')} />
           </div>
@@ -415,42 +423,64 @@ export function EditorModal() {
           </div>
         </div>
 
-        <label className={'checkbox-row' + (shell !== 'powershell' ? ' disabled' : '')} htmlFor="newElevated" id="elevatedRow">
+        <label className={'checkbox-row' + (shell !== 'powershell' ? ' disabled' : '')} htmlFor="newElevated" id="elevatedRow" title="PowerShell only — triggers a UAC prompt">
           <input type="checkbox" id="newElevated" disabled={shell !== 'powershell'} {...register('elevated')} />
-          <span>
-            Run as Administrator <span className="field-hint">(PowerShell only — triggers a UAC prompt)</span>
-          </span>
+          <span>Run as Administrator</span>
         </label>
+
+        {shell === 'ssh' && (
+          <div className="ssh-fields">
+            <div className="field-row">
+              <div className="field-col">
+                <label className="field-label" htmlFor="sshHost">Host</label>
+                <input type="text" id="sshHost" className="field-input" placeholder="example.com" autoComplete="off" {...register('sshHost')} />
+              </div>
+              <div className="field-col field-col-narrow">
+                <label className="field-label" htmlFor="sshPort">Port</label>
+                <input type="number" id="sshPort" className="field-input" placeholder="22" {...register('sshPort')} />
+              </div>
+            </div>
+            <div className="field-row">
+              <div className="field-col">
+                <label className="field-label" htmlFor="sshUsername">Username</label>
+                <input type="text" id="sshUsername" className="field-input" placeholder="deploy" autoComplete="off" {...register('sshUsername')} />
+              </div>
+              <div className="field-col">
+                <label className="field-label" htmlFor="sshIdentityFile" title="Optional — falls back to ssh's own default/agent">
+                  Identity file
+                </label>
+                <input type="text" id="sshIdentityFile" className="field-input" placeholder="C:\Users\me\.ssh\id_ed25519" autoComplete="off" {...register('sshIdentityFile')} />
+              </div>
+            </div>
+          </div>
+        )}
 
         {!multiStep && (
           <div>
-            <label className="checkbox-row" htmlFor="backgroundToggle">
+            <label
+              className="checkbox-row"
+              htmlFor="backgroundToggle"
+              title="Start/Stop a long-running process — dev server, docker compose up, tail -f — instead of run-once"
+            >
               <input
                 type="checkbox"
                 id="backgroundToggle"
                 {...register('background', { onChange: (e) => { if (!e.target.checked) setValue('autoRestart', false); } })}
               />
-              <span>
-                Run as a background process{' '}
-                <span className="field-hint">(Start/Stop a long-running process — dev server, docker compose up, tail -f — instead of run-once)</span>
-              </span>
+              <span>Run as a background process</span>
             </label>
             {background && (
-              <label className="checkbox-row" htmlFor="autoRestartToggle" id="autoRestartRow">
+              <label className="checkbox-row" htmlFor="autoRestartToggle" id="autoRestartRow" title="Gives up after 5 restarts in a row">
                 <input type="checkbox" id="autoRestartToggle" {...register('autoRestart')} />
-                <span>
-                  Restart automatically if it crashes <span className="field-hint">(gives up after 5 restarts in a row)</span>
-                </span>
+                <span>Restart automatically if it crashes</span>
               </label>
             )}
           </div>
         )}
 
-        <label className="checkbox-row" htmlFor="stdinToggle">
+        <label className="checkbox-row" htmlFor="stdinToggle" title="Piped into the command as it runs">
           <input type="checkbox" id="stdinToggle" {...register('stdinEnabled')} />
-          <span>
-            Provide stdin input <span className="field-hint">(piped into the command as it runs)</span>
-          </span>
+          <span>Provide stdin input</span>
         </label>
         {stdinEnabled && (
           <div>
@@ -458,9 +488,7 @@ export function EditorModal() {
           </div>
         )}
 
-        <label className="field-label">
-          Environment variables <span className="field-hint">(optional, added on top of the normal environment)</span>
-        </label>
+        <label className="field-label" title="Optional, added on top of the normal environment">Environment variables</label>
         <div className="env-list">
           {envArray.fields.map((field, i) => (
             <div className="env-row" key={field.id}>
@@ -476,62 +504,62 @@ export function EditorModal() {
           + Add variable
         </button>
 
+        <label className="field-label" title="Optional — extracts a value into a global variable after each run">Capture from output</label>
+        <div className="env-list">
+          {capturesArray.fields.map((field, i) => (
+            <div className="env-row" key={field.id}>
+              <input type="text" className="field-input env-key-input" placeholder="variable name" {...register(`captures.${i}.variable` as const)} />
+              <input type="text" className="field-input env-value-input" placeholder="regex, e.g. id: (\w+)" {...register(`captures.${i}.pattern` as const)} />
+              <button type="button" className="step-remove-btn" title="Remove" onClick={() => capturesArray.remove(i)}>
+                <Trash2 size={13} />
+              </button>
+            </div>
+          ))}
+        </div>
+        <button type="button" className="btn btn-ghost btn-small" onClick={() => capturesArray.append({ variable: '', pattern: '' })}>
+          + Add capture
+        </button>
+
         <div className="field-row">
           <div className="field-col">
-            <label className="field-label" htmlFor="expectExitCode">
-              Expect exit code <span className="field-hint">(optional)</span>
+            <label className="field-label" htmlFor="expectExitCode" title="Optional">
+              Expect exit code
             </label>
             <input type="number" id="expectExitCode" className="field-input" placeholder="e.g. 0" {...register('expectExitCode')} />
           </div>
           <div className="field-col">
-            <label className="field-label" htmlFor="expectOutput">
-              Expect output contains <span className="field-hint">(optional)</span>
+            <label className="field-label" htmlFor="expectOutput" title="Optional">
+              Expect output contains
             </label>
             <input type="text" id="expectOutput" className="field-input" placeholder="e.g. OK" autoComplete="off" {...register('expectOutput')} />
           </div>
         </div>
 
-        <label className="field-label" htmlFor="runAfterInput">
-          Run after this one <span className="field-hint">(auto-runs once this snippet succeeds — type a snippet name)</span>
+        <label className="field-label" title="Auto-runs once this snippet succeeds">
+          Run after this one
         </label>
         <Controller
-          name="runAfterInput"
+          name="runAfterId"
           control={control}
           render={({ field }) => (
-            <ThemedCombobox
-              id="runAfterInput"
-              placeholder="Start typing a snippet name…"
-              value={field.value}
-              onChange={field.onChange}
-              options={runRefOptions}
-              emptyLabel="No matching snippets"
-            />
+            <SnippetPickerField value={field.value} onChange={field.onChange} snippets={candidates} placeholder="Not set" emptyLabel="No other snippets yet" clearable />
           )}
         />
 
-        <label className="field-label" htmlFor="runBeforeInput">
-          Run before this one <span className="field-hint">(runs first, every time this snippet runs; skipped if it fails — type a snippet name)</span>
+        <label className="field-label" title="Runs first, every time this snippet runs; skipped if it fails">
+          Run before this one
         </label>
         <Controller
-          name="runBeforeInput"
+          name="runBeforeId"
           control={control}
           render={({ field }) => (
-            <ThemedCombobox
-              id="runBeforeInput"
-              placeholder="Start typing a snippet name…"
-              value={field.value}
-              onChange={field.onChange}
-              options={runRefOptions}
-              emptyLabel="No matching snippets"
-            />
+            <SnippetPickerField value={field.value} onChange={field.onChange} snippets={candidates} placeholder="Not set" emptyLabel="No other snippets yet" clearable />
           )}
         />
 
-        <label className="checkbox-row" htmlFor="scheduleToggle">
+        <label className="checkbox-row" htmlFor="scheduleToggle" title="In the background, while the app is running">
           <input type="checkbox" id="scheduleToggle" {...register('scheduleEnabled')} />
-          <span>
-            Run on a schedule <span className="field-hint">(in the background, while the app is running)</span>
-          </span>
+          <span>Run on a schedule</span>
         </label>
         {scheduleEnabled && (
           <div>
@@ -564,11 +592,33 @@ export function EditorModal() {
                 <p className="field-hint">5 fields: minute hour day-of-month month day-of-week — <code>*</code>, <code>*/n</code>, ranges and lists supported.</p>
               </div>
             )}
+            {schedulePlaceholderNames.length > 0 && (
+              <>
+                <label className="field-label">
+                  Fixed values for this schedule{' '}
+                  <InfoHint text="Optional, per-placeholder — checked before falling back to a saved global variable. Leave a value blank to keep using the global variable of the same name." />
+                </label>
+                <div className="env-list">
+                  {schedulePlaceholderNames.map((paramName) => (
+                    <div className="env-row" key={paramName}>
+                      <span className="schedule-param-name">{`{{${paramName}}}`}</span>
+                      <input
+                        type="text"
+                        className="field-input env-value-input"
+                        placeholder="uses a global variable if left blank"
+                        value={scheduleParamValues[paramName] || ''}
+                        onChange={(e) => setScheduleParamValues((prev) => ({ ...prev, [paramName]: e.target.value }))}
+                      />
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
           </div>
         )}
 
-        <label className="field-label" htmlFor="newNotes">
-          Notes <span className="field-hint">(optional — shown expandable on the card)</span>
+        <label className="field-label" htmlFor="newNotes" title="Optional — shown expandable on the card">
+          Notes
         </label>
         <textarea id="newNotes" className="field-textarea notes-textarea" rows={2} placeholder="Why this snippet exists, gotchas, links…" {...register('notes')} />
 

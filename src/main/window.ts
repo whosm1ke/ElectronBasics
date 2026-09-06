@@ -20,6 +20,22 @@ export const MIN_WINDOW_HEIGHT = 440;
 let mainWindow: BrowserWindow | null = null;
 let saveSizeTimer: ReturnType<typeof setTimeout> | null = null;
 
+// A handful of actions this app itself triggers deliberately spawn (or
+// bring forward) another OS-level window that steals focus — a real
+// terminal (shell/terminal.ts's openTerminal), a UAC elevation prompt
+// (shell/exec.ts's elevated path), a native file/folder picker
+// (dialog.showOpenDialog/showSaveDialog in ipc.ts). Every one of those used
+// to blur this window instantly, which the 'blur' handler below then read
+// as "the user clicked away" and hid the launcher — vanishing it out from
+// under whatever action the user had just clicked *inside* it to start.
+// ipc.ts calls suppressNextBlurHide() right before any of those, so a blur
+// landing inside the grace window is treated as "caused by us", not by the
+// user actually clicking elsewhere.
+let suppressBlurHideUntil = 0;
+export function suppressNextBlurHide(ms = 2000): void {
+  suppressBlurHideUntil = Date.now() + ms;
+}
+
 /** Persists the window's current size to app-settings.json — merged in, not overwriting the rest (hotkey, hasShownTrayHint). */
 function saveWindowSize(win: BrowserWindow): void {
   const [width, height] = win.getSize();
@@ -122,7 +138,10 @@ export function createWindow(appIcon: NativeImage): BrowserWindow {
   });
 
   // Hide (not quit) when the window loses focus — classic launcher behavior.
+  // Skipped for a short grace window right after this app itself opened a
+  // terminal/UAC prompt/native dialog — see suppressNextBlurHide() above.
   mainWindow.on('blur', () => {
+    if (Date.now() < suppressBlurHideUntil) return;
     if (mainWindow && !mainWindow.webContents.isDevToolsFocused()) {
       hideWindow();
     }

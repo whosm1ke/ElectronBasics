@@ -12,9 +12,10 @@
 // into real DOM elements Card.tsx hands it via refs, exactly as the
 // original rendered into elements cards.js handed it.
 import { diffLines } from 'diff';
-import type { Snippet, RunResult, SequenceResult, DebugInfo } from '@shared/types';
+import type { Snippet, RunResult, SequenceResult, DebugInfo, Variable } from '@shared/types';
+import { extractCaptures } from '@shared/captures';
 import { iconSvg } from './icons';
-import { prettyMaybeJson, runnableTextOf, extractPlaceholders, buildCardMetaText, snippetIcon } from './utils';
+import { prettyMaybeJson, runnableTextOf, extractPlaceholders, buildCardMetaText, snippetIcon, newId } from './utils';
 import { playTone, maybeNotify } from './appearance';
 import { persistSnippets } from './snippetsStore';
 import { showToast } from './toast';
@@ -44,6 +45,20 @@ function patchCardMeta(cardEl: HTMLElement | null, snippet: Snippet): void {
     titleGroup.appendChild(meta);
   }
   meta.textContent = text;
+}
+
+/** Applies `snippet.captures` (if any) against this run's combined output — the renderer-side equivalent of unattendedRun.ts's own applyCaptures, for a manually-triggered run. A captured value never touches a variable's `secret` flag either way (preserved on update, false on create). */
+async function applyCaptures(snippet: Snippet, combinedText: string): Promise<void> {
+  if (!snippet.captures) return;
+  const captured = extractCaptures(snippet.captures, combinedText);
+  if (captured.length === 0) return;
+  const variables = state.variables as Variable[];
+  for (const { name, value } of captured) {
+    const existing = variables.find((v) => v.name === name);
+    if (existing) existing.value = value;
+    else variables.push({ id: newId('var'), name, value, secret: false, computed: null });
+  }
+  state.variables = await window.electronAPI.saveVariables(variables);
 }
 
 async function recordRun(snippet: Snippet, cardEl: HTMLElement | null = null): Promise<void> {
@@ -149,6 +164,7 @@ async function executeSnippet(snippet: Snippet, overridePayload: string | string
       elevated: snippet.elevated,
       env: snippet.env,
       stopOnError: Boolean(snippet.stopOnStepError),
+      ssh: snippet.ssh,
     });
     return { isSeq: true, steps, success: result.overallCode === 0, raw: result };
   }
@@ -163,6 +179,7 @@ async function executeSnippet(snippet: Snippet, overridePayload: string | string
     env: snippet.env,
     stdin: snippet.stdin,
     debug: useUiStore.getState().devModeEnabled,
+    ssh: snippet.ssh,
   });
   return { isSeq: false, success: result.code === 0, raw: result };
 }
@@ -279,6 +296,7 @@ async function runChainMember(snippet: Snippet, ctx: ChainContext, role: 'before
 
   ctx.combinedText.push(`${role ? `[${role}] ` : ''}${snippet.name}:\n${combinedText}`);
   await recordRun(snippet, findCardEl(snippet.id));
+  await applyCaptures(snippet, `${combinedResult.stdout}\n${combinedResult.stderr}`);
 
   if (exec.success && snippet.runAfterThis) {
     const next = snippets.find((s) => s.id === snippet.runAfterThis);

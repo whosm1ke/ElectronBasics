@@ -4,6 +4,6 @@
 // generates this from the other, it's a hand-kept mirror by design (see
 // CLAUDE.md's sanitizeSnippet-is-the-schema-source-of-truth note — this file
 // is the TS *view* of that source of truth, not a replacement for it).
-export const VALID_SHELLS = ['powershell', 'cmd', 'gitbash', 'wsl', 'node', 'python'] as const;
+export const VALID_SHELLS = ['powershell', 'cmd', 'gitbash', 'wsl', 'node', 'python', 'ssh'] as const;
 
 export type ShellType = (typeof VALID_SHELLS)[number];

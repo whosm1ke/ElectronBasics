@@ -4,7 +4,7 @@
 // see CLAUDE.md's migration notes on the strangler-fig approach.
 import { differenceInSeconds, differenceInMinutes, differenceInHours, differenceInDays, differenceInWeeks, differenceInMonths, differenceInYears } from 'date-fns';
 import { newId } from '@shared/id';
-import type { Snippet, ShellType, PipelineEdge } from '@shared/types';
+import type { Snippet, ShellType, PipelineEdge, PipelineNode, Pipeline } from '@shared/types';
 
 // Re-exported (not reimplemented) — used to be its own near-identical copy
 // here, consolidated into one shared implementation once the zod schemas in
@@ -22,7 +22,7 @@ export const TAG_ICONS: Record<string, string> = {
 };
 
 export const SHELL_LABELS: Record<ShellType, string> = {
-  powershell: 'PowerShell', cmd: 'CMD', gitbash: 'Git Bash', wsl: 'WSL', node: 'Node.js', python: 'Python',
+  powershell: 'PowerShell', cmd: 'CMD', gitbash: 'Git Bash', wsl: 'WSL', node: 'Node.js', python: 'Python', ssh: 'SSH',
 };
 
 export const PLACEHOLDER_RE = /\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g;
@@ -248,6 +248,63 @@ export function pipelineConditionLabel({ condition, value }: Pick<PipelineEdge, 
     default:
       return condition;
   }
+}
+
+/**
+ * Every distinct `{{placeholder}}` name across every 'step' node's snippet
+ * in this pipeline, collected once so the whole run can be prompted up
+ * front (see PipelinesModal.tsx's param-gate) instead of skipping every
+ * parameterized step outright. Deliberately does NOT recurse into a
+ * 'pipeline'-kind node's own sub-pipeline — a parameterized step inside a
+ * nested sub-pipeline still gets skipped unless its placeholder name
+ * happens to already be one this top-level prompt collected; scanning
+ * every level down would mean loading every referenced pipeline's own
+ * nodes just to build this list, for a rarely-hit case.
+ */
+export function collectPipelinePlaceholders(nodes: PipelineNode[], snippets: Snippet[]): string[] {
+  const names = new Set<string>();
+  for (const n of nodes) {
+    if (n.kind !== 'step') continue;
+    const snippet = snippets.find((s) => s.id === n.snippetId);
+    if (!snippet) continue;
+    extractPlaceholders(runnableTextOf(snippet)).forEach((name) => names.add(name));
+  }
+  return Array.from(names);
+}
+
+/** A pipeline node's display name regardless of kind — the Inspector's "Connects to" list and canvas node components each need this same lookup (a step's snippet name, a sub-pipeline's own name, or a short generic caption for delay/gate). */
+export function pipelineNodeDisplayName(node: Pick<PipelineNode, 'kind' | 'snippetId' | 'subPipelineId' | 'label' | 'delaySeconds'>, snippets: Snippet[], pipelines: Pipeline[]): string {
+  if (node.kind === 'step') return snippets.find((s) => s.id === node.snippetId)?.name || '⚠ (deleted snippet)';
+  if (node.kind === 'pipeline') return pipelines.find((p) => p.id === node.subPipelineId)?.name || node.label || '⚠ (pipeline not found)';
+  if (node.kind === 'delay') return node.label || `Wait ${node.delaySeconds}s`;
+  return node.label || 'Approval gate';
+}
+
+/**
+ * Would pipeline `editingId` (about to be saved with `subPipelineIds` —
+ * every OTHER pipeline its own 'pipeline'-kind nodes now point at) end up
+ * indirectly referencing itself? Walks forward through every OTHER saved
+ * pipeline's own sub-pipeline references — same "does X eventually reach
+ * itself" shape as pipelineEdgeCreatesCycle above, just one level up (across
+ * pipelines instead of within one graph). A brand-new pipeline (editingId
+ * null) can't be part of a cycle yet — nothing else can already point at an
+ * id that doesn't exist.
+ */
+export function pipelineReferenceCreatesCycle(pipelines: Pipeline[], editingId: string | null, subPipelineIds: string[]): boolean {
+  if (!editingId) return false;
+  const byId = new Map(pipelines.map((p) => [p.id, p]));
+  const visited = new Set<string>();
+  const stack = [...subPipelineIds];
+  while (stack.length) {
+    const cur = stack.pop()!;
+    if (cur === editingId) return true;
+    if (visited.has(cur)) continue;
+    visited.add(cur);
+    const p = byId.get(cur);
+    if (!p) continue;
+    p.nodes.filter((n) => n.kind === 'pipeline' && n.subPipelineId).forEach((n) => stack.push(n.subPipelineId));
+  }
+  return false;
 }
 
 /** The "PowerShell · 3-step sequence · ran 4× · last 2m ago"-style meta line under a card's title. Shared by cards.js (initial render) and run-engine.js (in-place patch after a run, so a run doesn't need a full card rebuild just to update this text). */

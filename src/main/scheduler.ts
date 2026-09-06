@@ -4,7 +4,9 @@
 // who enabled the schedule is trusted to know what they turned on.
 import { Cron } from 'croner';
 import { readSnippets, writeSnippets } from './storage/snippets';
+import { readPipelines, writePipelines } from './storage/pipelines';
 import { runUnattended } from './unattendedRun';
+import { runScheduledPipeline } from './pipelineRunner';
 import type { ScheduleConfig } from '@shared/types';
 
 const SCHEDULE_CHECK_INTERVAL_MS = 30 * 1000;
@@ -59,7 +61,7 @@ export async function tickScheduler(): Promise<void> {
       if (!snippet.schedule || !snippet.schedule.enabled) continue;
       if (!isScheduleDue(snippet.schedule, now)) continue;
       // eslint-disable-next-line no-await-in-loop
-      await runUnattended(snippet, 'scheduled');
+      await runUnattended(snippet, 'scheduled', true, snippet.schedule.paramValues);
       snippet.schedule.lastRunAt = new Date().toISOString();
       snippet.lastRunAt = snippet.schedule.lastRunAt;
       snippet.runCount = (snippet.runCount || 0) + 1;
@@ -68,6 +70,23 @@ export async function tickScheduler(): Promise<void> {
     if (changed) writeSnippets(snippets);
   } catch (err) {
     console.error('Scheduler tick failed:', err);
+  }
+
+  try {
+    const pipelines = readPipelines();
+    const now = new Date();
+    let pipelinesChanged = false;
+    for (const pipeline of pipelines) {
+      if (!pipeline.schedule || !pipeline.schedule.enabled) continue;
+      if (!isScheduleDue(pipeline.schedule, now)) continue;
+      // eslint-disable-next-line no-await-in-loop
+      await runScheduledPipeline(pipeline);
+      pipeline.schedule.lastRunAt = new Date().toISOString();
+      pipelinesChanged = true;
+    }
+    if (pipelinesChanged) writePipelines(pipelines);
+  } catch (err) {
+    console.error('Scheduler pipeline tick failed:', err);
   }
 }
 

@@ -14,9 +14,15 @@ interface PipelinesState {
   view: 'list' | 'editor';
   editingId: string | null;
   pipelines: Pipeline[];
+  // Set only by closePipelinesForRun() (never the header Back button's plain
+  // closePipelines()) — lets the onBatchModalClosed subscription in
+  // PipelinesModal.tsx tell "this screen closed to hand off to a run's
+  // results modal, reopen once that's dismissed" apart from "the user backed
+  // out on purpose, leave it closed."
+  pendingReopen: boolean;
 }
 
-const useStore = create<PipelinesState>(() => ({ open: false, view: 'list', editingId: null, pipelines: [] }));
+const useStore = create<PipelinesState>(() => ({ open: false, view: 'list', editingId: null, pipelines: [], pendingReopen: false }));
 
 export function usePipelinesStore(): PipelinesState {
   return useStore();
@@ -51,6 +57,16 @@ export function showPipelinesListView(): void {
 
 export function closePipelines(): void {
   useStore.setState({ open: false });
+}
+
+/** Same as closePipelines(), but for the "hand off to a run's results modal" case — see pendingReopen's comment above. `view`/`editingId` are left untouched (already the case for a plain closePipelines()), so reopening lands back exactly where the run started from. */
+export function closePipelinesForRun(): void {
+  useStore.setState({ open: false, pendingReopen: true });
+}
+
+/** Wired to lib/events.ts's onBatchModalClosed by PipelinesModal.tsx — reopens iff the modal that just closed is the one closePipelinesForRun() itself handed off to; a no-op for every other batch/group/tag run's own results modal closing. */
+export function consumePendingReopen(): void {
+  if (useStore.getState().pendingReopen) useStore.setState({ open: true, pendingReopen: false });
 }
 
 export function isPipelinesOpen(): boolean {

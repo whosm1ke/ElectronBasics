@@ -4,12 +4,15 @@
 import { ipcMain, clipboard, dialog, shell, app, type IpcMainInvokeEvent } from 'electron';
 import fs from 'node:fs';
 
-import { getMainWindow, hideWindow, showWindow } from './window';
+import { getMainWindow, hideWindow, showWindow, suppressNextBlurHide } from './window';
 import { registerHotkey, getCurrentHotkey } from './hotkey';
 import { runShellCommand } from './shell/exec';
 import { openTerminal } from './shell/terminal';
 import * as processManager from './shell/process-manager';
 import { readShellHistorySources } from './shell/history-import';
+import { refreshComputedVariable } from './computedVariables';
+import * as watchTriggersStore from './storage/watchTriggers';
+import { syncFileWatchers } from './fileWatcher';
 import { envListToObject } from './env-utils';
 import { newId } from '@shared/id';
 
@@ -46,11 +49,17 @@ export function registerIpcHandlers(): void {
       env = null,
       stdin = null,
       debug = false,
+      ssh = null,
     } = (payload && typeof payload === 'object' ? payload : { command: payload }) as RunCommandPayload;
+
+    // An elevated run pops a real UAC consent prompt — a genuinely separate
+    // OS window that would otherwise blur (and hide) the launcher the
+    // instant it appears, before the user ever gets to answer it.
+    if (elevated) suppressNextBlurHide();
 
     const startedAt = Date.now();
     const result = await runShellCommand(command, {
-      cwd, shell: shellType, elevated, env: envListToObject(env), stdin, debug,
+      cwd, shell: shellType, elevated, env: envListToObject(env), stdin, debug, ssh,
     });
     const durationMs = Date.now() - startedAt;
 
@@ -79,6 +88,7 @@ export function registerIpcHandlers(): void {
       elevated = false,
       env = null,
       stopOnError = false,
+      ssh = null,
     } = (payload && typeof payload === 'object' ? payload : {}) as RunSequencePayload;
 
     const stepList = Array.isArray(steps) ? steps.filter((s) => typeof s === 'string' && s.trim()) : [];
@@ -91,7 +101,7 @@ export function registerIpcHandlers(): void {
     const envObj = envListToObject(env);
     for (const step of stepList) {
       // eslint-disable-next-line no-await-in-loop
-      const result = await runShellCommand(step, { cwd, shell: shellType, elevated, env: envObj });
+      const result = await runShellCommand(step, { cwd, shell: shellType, elevated, env: envObj, ssh });
       results.push({ command: step, ...result });
       if (stopOnError && result.code !== 0) break; // remaining steps are simply absent from `results`
     }
@@ -114,6 +124,8 @@ export function registerIpcHandlers(): void {
   });
 
   ipcMain.handle('open-terminal', async (_event: IpcMainInvokeEvent, payload: OpenTerminalPayload) => {
+    // A real, separate console window is about to steal focus.
+    suppressNextBlurHide();
     return openTerminal(payload || {});
   });
 
@@ -156,6 +168,7 @@ export function registerIpcHandlers(): void {
   });
 
   ipcMain.handle('export-snippets', async () => {
+    suppressNextBlurHide();
     const win = getMainWindow();
     const { canceled, filePath } = await dialog.showSaveDialog(win!, {
       title: 'Export snippets',
@@ -172,6 +185,7 @@ export function registerIpcHandlers(): void {
   });
 
   ipcMain.handle('import-snippets', async () => {
+    suppressNextBlurHide();
     const win = getMainWindow();
     const { canceled, filePaths } = await dialog.showOpenDialog(win!, {
       title: 'Import snippets',
@@ -257,6 +271,31 @@ export function registerIpcHandlers(): void {
     } catch {
       return false;
     }
+  });
+
+  ipcMain.handle('refresh-computed-variable', async (_event: IpcMainInvokeEvent, variableId: string) => {
+    return refreshComputedVariable(variableId);
+  });
+
+  ipcMain.handle('get-watch-triggers', async () => {
+    return watchTriggersStore.readWatchTriggers();
+  });
+
+  ipcMain.handle('save-watch-triggers', async (_event: IpcMainInvokeEvent, triggers: unknown) => {
+    const saved = watchTriggersStore.writeWatchTriggers(triggers);
+    syncFileWatchers();
+    return saved;
+  });
+
+  ipcMain.handle('pick-watch-path', async () => {
+    suppressNextBlurHide();
+    const win = getMainWindow();
+    const { canceled, filePaths } = await dialog.showOpenDialog(win!, {
+      title: 'Choose a file or folder to watch',
+      properties: ['openFile', 'openDirectory'],
+    });
+    if (canceled || !filePaths[0]) return { ok: false };
+    return { ok: true, path: filePaths[0] };
   });
 
   ipcMain.handle('get-shell-history', async () => {

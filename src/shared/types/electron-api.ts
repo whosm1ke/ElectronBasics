@@ -14,6 +14,7 @@ import type { Variable } from './variable';
 import type { Group } from './group';
 import type { Pipeline } from './pipeline';
 import type { Library } from './library';
+import type { WatchTrigger } from './watchTrigger';
 import type { HistorySource } from './misc';
 import type { HistoryEntry } from './history';
 import type {
@@ -62,6 +63,7 @@ export interface ElectronAPI {
 
   getVariables(): Promise<Variable[]>;
   saveVariables(vars: Variable[]): Promise<Variable[]>;
+  refreshComputedVariable(variableId: string): Promise<Variable[]>;
 
   getGroups(): Promise<Group[]>;
   saveGroups(groups: Group[]): Promise<Group[]>;
@@ -75,6 +77,10 @@ export interface ElectronAPI {
   removeLibrary(libraryId: string): Promise<RemoveLibraryResult>;
 
   getShellHistory(): Promise<HistorySource[]>;
+
+  getWatchTriggers(): Promise<WatchTrigger[]>;
+  saveWatchTriggers(triggers: WatchTrigger[]): Promise<WatchTrigger[]>;
+  pickWatchPath(): Promise<{ ok: boolean; path?: string }>;
 
   openPath(targetPath: string): Promise<OkResult>;
   pathExists(targetPath: string): Promise<boolean>;

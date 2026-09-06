@@ -6,27 +6,13 @@
 import { useEffect, useState } from 'react';
 import { ArrowLeft, Clock, Play } from 'lucide-react';
 import type { Snippet } from '@shared/types';
-import { snippetIcon, timeUntil, extractPlaceholders, runnableTextOf } from '../../lib/utils';
-import { showToast } from '../../lib/toast';
+import { snippetIcon, timeUntil } from '../../lib/utils';
+import { quickRunSnippet } from '../../lib/quickRun';
 import { scheduledSnippetRows, scheduleDescription } from '../../lib/scheduleOverview';
 import { useScheduleOverviewStore, closeScheduleOverview } from '../../store/useScheduleStore';
 import { openModal } from '../../store/useEditorStore';
 import { state } from '../../../modules/state';
-
-async function runNow(snippet: Snippet) {
-  if (extractPlaceholders(runnableTextOf(snippet)).length > 0) {
-    showToast('This snippet needs input — open it to fill in its parameters first', 'error');
-    openModal(snippet);
-    return;
-  }
-  showToast(`Running "${snippet.name}"…`);
-  const result =
-    snippet.steps && snippet.steps.length
-      ? await window.electronAPI.runSequence({ steps: snippet.steps, snippetId: snippet.id, snippetName: snippet.name, cwd: snippet.cwd, shell: snippet.shell, env: snippet.env })
-      : await window.electronAPI.runCommand({ command: snippet.command, snippetId: snippet.id, snippetName: snippet.name, cwd: snippet.cwd, shell: snippet.shell, elevated: snippet.elevated, env: snippet.env });
-  const code = 'overallCode' in result ? result.overallCode : result.code;
-  showToast(code === 0 ? `"${snippet.name}" finished successfully` : `"${snippet.name}" failed (exit code ${code})`, code === 0 ? 'info' : 'error');
-}
+import { InfoHint } from '../shared/InfoHint';
 
 export function ScheduleModal() {
   const { open } = useScheduleOverviewStore();
@@ -50,8 +36,9 @@ export function ScheduleModal() {
           <ArrowLeft size={16} />
         </button>
         <div className="screen-header-title">
-          <h2>Schedule</h2>
-          <span className="field-hint">Every snippet running on a schedule, soonest due first.</span>
+          <h2>
+            Schedule <InfoHint text="Every snippet running on a schedule, soonest due first." />
+          </h2>
         </div>
       </div>
       <div className="screen-body no-scrollbar">
@@ -80,7 +67,7 @@ export function ScheduleModal() {
                   <button type="button" className="btn btn-small" onClick={() => openModal(snippet)}>
                     Edit
                   </button>
-                  <button type="button" className="btn btn-small btn-primary" onClick={() => runNow(snippet)}>
+                  <button type="button" className="btn btn-small btn-primary" onClick={() => quickRunSnippet(snippet)}>
                     <Play size={12} fill="currentColor" stroke="none" />
                     <span>Run now</span>
                   </button>

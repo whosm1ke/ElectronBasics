@@ -10,6 +10,8 @@ import { registerHotkey } from './hotkey';
 import { registerIpcHandlers } from './ipc';
 import { startScheduler } from './scheduler';
 import { initTriggerServer, stopTriggerServer } from './triggerServer';
+import { startComputedVariablesTicker } from './computedVariables';
+import { initFileWatchers, stopAllFileWatchers } from './fileWatcher';
 import { initUpdater } from './updater';
 import * as processManager from './shell/process-manager';
 import { ensureSnippetsFile } from './storage/snippets';
@@ -64,6 +66,8 @@ app.whenReady().then(() => {
 
   maybeShowTrayHint(appSettings, registeredHotkey);
   startScheduler();
+  startComputedVariablesTicker();
+  initFileWatchers();
   initTriggerServer();
   initUpdater();
 
@@ -94,6 +98,7 @@ app.on('before-quit', (event) => {
   if (quitConfirmed) return;
   event.preventDefault();
   stopTriggerServer();
+  stopAllFileWatchers();
   processManager.stopAll().finally(() => {
     quitConfirmed = true;
     app.quit();
