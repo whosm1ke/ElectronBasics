@@ -795,6 +795,161 @@ const HELP_TOPICS: HelpTopic[] = [
       'A parameterized snippet with nothing to fill it in is skipped and marked as such, not run with broken text.',
     ],
   },
+  {
+    id: 'health',
+    title: 'Health',
+    summary: 'A read-only scan for problems that only show up once you actually run something: broken working directories, dangling run-before/run-after links, and snippets whose last run failed.',
+    steps: [
+      'Open Health from the header icon (or the command palette).',
+      'Each flagged snippet lists what\'s wrong, with "Details" and "Fix…" (opens its editor) actions right on the row.',
+      'Click "Rescan" any time — Health never changes anything on its own, it only surfaces what\'s worth a look.',
+    ],
+  },
+  {
+    id: 'command-palette',
+    title: 'Command palette',
+    summary: 'Ctrl+K from anywhere in the launcher — fuzzy-run any snippet by name/tag/command, or jump straight to any other screen.',
+    steps: [
+      'Press Ctrl+K.',
+      'Type part of a snippet\'s name, tag, or command (typos included), or type a screen\'s name ("groups", "pipelines", "health", "schedule", "settings", "help", …) to jump straight to it.',
+      'Enter (or a click) runs the selected snippet immediately, same as its card\'s Run button — a parameterized one opens the editor instead, since there\'s no card here to show the inline form on.',
+    ],
+  },
+  {
+    id: 'terminal-history',
+    title: 'Import from terminal history',
+    summary: 'Turn commands you already typed into PowerShell or Git Bash into a saved snippet, instead of retyping them.',
+    steps: [
+      'Open "Import from terminal history" from the header icon.',
+      'Check off one or more lines — several become an ordered multi-step sequence, in the order you originally typed them.',
+      '"Create snippet" saves it as-is; "Create & edit…" drops you into the full editor first to add a tag, working directory, and so on.',
+    ],
+  },
+  {
+    id: 'captures',
+    title: 'Capture output into a variable',
+    summary: 'Pull a value straight out of a run\'s output into a global variable — the next snippet using {{that name}} gets it automatically.',
+    steps: [
+      'In a snippet\'s editor, under "Capture from output", click "+ Add capture".',
+      'Name the variable to write, and a regex to extract the value — group 1 if the pattern has one, the whole match otherwise.',
+      'Every run (manual or unattended) re-extracts and updates that global variable — a capture never touches an existing variable\'s "secret" flag either way.',
+    ],
+  },
+  {
+    id: 'assertions',
+    title: 'Assertions (expect exit code / output contains)',
+    summary: 'Mark a run as failed even when the shell itself exited 0 — useful for a health-check-style command where "ran without error" isn\'t the same as "passed".',
+    steps: [
+      'In a snippet\'s editor, fill in "Expect exit code" and/or "Expect output contains".',
+      'After the run, the result is checked against both — a mismatch shows as a failure, called out separately from the shell\'s own exit code.',
+      'Leave both blank for the plain default (exit code 0 = success).',
+    ],
+  },
+  {
+    id: 'env-vars',
+    title: 'Per-snippet environment variables',
+    summary: 'Set environment variables for just one snippet\'s own run, without touching your system-wide environment.',
+    steps: [
+      'In a snippet\'s editor, under "Environment variables", click "+ Add variable".',
+      'Fill in KEY and value — up to 20 pairs, merged on top of the normal environment for that run only.',
+    ],
+  },
+  {
+    id: 'run-chaining',
+    title: 'Run-before / run-after chaining',
+    summary: 'Chain two snippets directly, without building a whole Pipeline for something this simple.',
+    steps: [
+      '"Run after this one" (in a snippet\'s editor) picks a snippet to auto-run once this one succeeds.',
+      '"Run before this one" picks a snippet that always runs first, skipped if it fails.',
+      'A chain that would loop back on itself is refused at save time. For branching on success vs. failure specifically, reach for a Pipeline instead — see "Pipelines" above.',
+    ],
+  },
+  {
+    id: 'ssh',
+    title: 'Running a command over SSH',
+    summary: 'Run a snippet on a remote host instead of this machine, using Windows\' own built-in OpenSSH client.',
+    steps: [
+      'In a snippet\'s editor, set Shell to "SSH".',
+      'Fill in Host, Port (default 22), Username, and optionally an identity file — leave the identity file blank to fall back to ssh\'s own default/agent.',
+      'The snippet\'s "Working directory" still applies — it\'s folded into the remote command as a `cd`, since a local working directory has no meaning for a process that isn\'t running on this machine.',
+    ],
+  },
+  {
+    id: 'run-history',
+    title: 'Run history & search',
+    summary: 'Every run — single, sequence, scheduled, batch, pipeline, or triggered — is logged, up to the last 100, searchable by name, command text, or captured output.',
+    steps: [
+      'Open run history from the header icon (or Ctrl+H).',
+      'Search matches name, command text, AND output — not just what\'s visible in the list.',
+      'Expand a row to see its full output.',
+    ],
+  },
+  {
+    id: 'details',
+    title: 'A snippet\'s Details panel',
+    summary: 'The small "i" icon on a card — dependencies, schedule, which groups/pipelines it\'s used in, run stats, and its id.',
+    steps: [
+      'Click the small info icon on a card.',
+      'Copy its Snippet ID from the Stats section — that\'s what an external HTTP trigger URL needs (see "HTTP triggers" above).',
+      'Every run-before/run-after/group/pipeline link shown here is clickable, straight into that other snippet/group/pipeline.',
+    ],
+  },
+  {
+    id: 'copy-as',
+    title: '"Copy as…" (Markdown / one-liner)',
+    summary: 'Copy a snippet in a different shape than its own command text — for pasting into a chat or docs, or a script that needs it as a single line.',
+    steps: [
+      'Click the small caret next to a card\'s Copy button.',
+      '"Copy as Markdown" wraps it in a fenced code block, language-tagged by its shell.',
+      '"Copy as one-liner" joins every step of a multi-step snippet with `;` into a single line.',
+    ],
+  },
+  {
+    id: 'card-actions',
+    title: 'Pin, duplicate & manual reorder',
+    summary: 'Quick per-card actions beyond Run, for keeping your most-used snippets fastest to reach.',
+    steps: [
+      'The star icon (or Ctrl+P on the selected card) pins a snippet to the top and the Favorites bar.',
+      'Ctrl+D duplicates the selected card.',
+      'Set sort order to "Manual" (the dropdown next to the tag filters) to drag cards into your own order via the small handle on the left of each card — only available with no active search, tag filter, or grouping.',
+    ],
+  },
+  {
+    id: 'undo-delete',
+    title: 'Undoing a delete',
+    summary: 'Deleting a snippet isn\'t final for as long as its toast is still on screen.',
+    steps: [
+      'Click Delete on a card (or its context menu).',
+      'Click "Undo" on the toast that appears — it restores the exact same snippet at the exact same position.',
+    ],
+  },
+  {
+    id: 'hotkey',
+    title: 'Custom global hotkey',
+    summary: 'Change the keyboard shortcut that shows/hides the launcher from anywhere in Windows.',
+    steps: [
+      'Settings → Behavior → click the "Global hotkey" field, press the combination you want, click Save.',
+      'If it\'s already claimed by another app, you\'re told and the previous one stays active — you\'re never left without a working hotkey.',
+    ],
+  },
+  {
+    id: 'updates',
+    title: 'Checking for updates',
+    summary: 'Nothing updates itself in the background — checking, downloading, and installing are three separate, explicit clicks.',
+    steps: [
+      'Settings → Updates → "Check for updates".',
+      'If a newer version is published, download it, then restart to install — this only works in the installed app, not when running from source.',
+    ],
+  },
+  {
+    id: 'backup',
+    title: 'Export & import your library',
+    summary: 'Back up your whole snippet library to a file, or move it to another machine.',
+    steps: [
+      'Settings → Data → "Export snippets…" saves everything to a JSON file you choose.',
+      '"Import snippets…" adds a previously exported file\'s snippets to your existing library with fresh ids — it never overwrites or duplicates anything by accident.',
+    ],
+  },
 ];
 
 function HelpSection() {
