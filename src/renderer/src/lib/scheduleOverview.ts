@@ -4,7 +4,7 @@
 // no Node-specific APIs, so it works unmodified in the renderer bundle too
 // — no IPC round trip needed just to answer "when's the next cron tick".
 import { Cron } from 'croner';
-import type { Snippet, ScheduleConfig } from '@shared/types';
+import type { Snippet, Pipeline, Group, ScheduleConfig } from '@shared/types';
 
 /** Mirrors the main process's own 30s tick (scheduler.ts) — interval/daily due-checks below assume the schedule is actually evaluated this often. */
 const SCHEDULE_CHECK_INTERVAL_MS = 30 * 1000;
@@ -72,6 +72,40 @@ export function scheduledSnippetRows(snippets: Snippet[]): ScheduledSnippetRow[]
       if (!b.nextRun) return -1;
       return a.nextRun.getTime() - b.nextRun.getTime();
     });
+}
+
+/** Shared soonest-first sort for the pipeline/group rows below — same null-sinks-to-bottom rule as scheduledSnippetRows() above. */
+function byNextRun<T extends { nextRun: Date | null }>(a: T, b: T): number {
+  if (!a.nextRun && !b.nextRun) return 0;
+  if (!a.nextRun) return 1;
+  if (!b.nextRun) return -1;
+  return a.nextRun.getTime() - b.nextRun.getTime();
+}
+
+export interface ScheduledPipelineRow {
+  pipeline: Pipeline;
+  nextRun: Date | null;
+}
+
+/** Every enabled-schedule pipeline, soonest-due first — see main/pipelineRunner.ts + scheduler.ts's tick for what actually runs them. */
+export function scheduledPipelineRows(pipelines: Pipeline[]): ScheduledPipelineRow[] {
+  return pipelines
+    .filter((p) => p.schedule?.enabled)
+    .map((pipeline) => ({ pipeline, nextRun: computeNextRun(pipeline.schedule) }))
+    .sort(byNextRun);
+}
+
+export interface ScheduledGroupRow {
+  group: Group;
+  nextRun: Date | null;
+}
+
+/** Every enabled-schedule group, soonest-due first — see main/groupRunner.ts + scheduler.ts's tick for what actually runs them. */
+export function scheduledGroupRows(groups: Group[]): ScheduledGroupRow[] {
+  return groups
+    .filter((g) => g.schedule?.enabled)
+    .map((group) => ({ group, nextRun: computeNextRun(group.schedule) }))
+    .sort(byNextRun);
 }
 
 void SCHEDULE_CHECK_INTERVAL_MS; // documents the precision assumption above; not otherwise referenced

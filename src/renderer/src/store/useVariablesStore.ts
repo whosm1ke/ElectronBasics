@@ -6,7 +6,6 @@
 import { create } from 'zustand';
 import { state } from '../../modules/state';
 import { bumpSnippetsVersion } from './useSnippetsVersion';
-import { openSettings, closeSettings } from './useSettingsStore';
 
 const useStore = create<{ open: boolean }>(() => ({ open: false }));
 
@@ -15,11 +14,11 @@ export function useVariablesOpen(): boolean {
 }
 
 export async function openVariables(): Promise<void> {
-  // Settings is React now too (SettingsModal.tsx/useSettingsStore.ts) —
-  // this hide/show is still the same Settings<->Variables swap
-  // modules/settings-modal.js always did, just via that store instead of
-  // toggling a DOM node's `hidden` directly.
-  closeSettings();
+  // Used to close Settings first and reopen it (reset to its default
+  // category) on close — a modules/settings-modal.js leftover from before
+  // `.modal-overlay` rendered above `.screen` (see style.css). Now that it
+  // does, this can just open on top of whatever's already there (Settings
+  // or anything else Variables gets opened from) and leave it alone.
   useStore.setState({ open: true });
   state.variables = await window.electronAPI.getVariables();
   bumpSnippetsVersion(); // ParamForm/Card reads state.variables too — keep them fresh
@@ -27,7 +26,6 @@ export async function openVariables(): Promise<void> {
 
 export function closeVariables(): void {
   useStore.setState({ open: false });
-  openSettings();
 }
 
 export function isVariablesOpen(): boolean {

@@ -581,6 +581,7 @@ body {
 .schedule-badge {
   display: inline-flex;
   align-items: center;
+  margin-left: 6px;
   color: var(--accent-hover);
   flex-shrink: 0;
 }
@@ -731,6 +732,34 @@ body {
   color: var(--text-secondary);
   min-width: 80px;
   font-family: "Cascadia Code", "Consolas", "Courier New", monospace;
+}
+
+/* Only rendered with real content when a batch/group/pipeline run's shared
+   param form (usedBy) says which snippet(s) a given {{name}} actually
+   belongs to — Card.tsx's own per-card form never sets it, so this stays
+   an empty, invisible column there instead of changing that layout. */
+.param-row-label {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-width: 160px;
+}
+
+.param-row-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.param-row-usedby {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--text-tertiary);
+  text-transform: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .param-input {
@@ -1489,6 +1518,9 @@ kbd {
   font-size: 13.5px;
   font-weight: 600;
   color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .pipeline-inspector-meta {
@@ -1565,6 +1597,7 @@ kbd {
 .pipeline-mini-node-delay svg { color: var(--accent-hover); flex-shrink: 0; }
 .pipeline-mini-node-gate svg { color: var(--warning); flex-shrink: 0; }
 .pipeline-mini-node-subpipeline svg { color: var(--text-secondary); flex-shrink: 0; }
+.pipeline-mini-node-group svg { color: var(--success); flex-shrink: 0; }
 .pipeline-mini-node.broken { border-color: rgba(255, 107, 107, 0.5); }
 
 /* ---------- Live run-status painting (lib/pipelineEngine.ts) ----------
@@ -1606,13 +1639,35 @@ kbd {
   color: var(--accent-hover);
 }
 
-.pipeline-settings-panel {
+/* Shared by PipelinesModal.tsx's own toolbar "Settings" panel AND
+   GroupEditorModal.tsx's own Schedule panel (schedule + concurrency for the
+   former, just a schedule for the latter) — generic layout, not actually
+   pipeline-specific, kept under this name only because it was written first. */
+.schedule-settings-panel {
   padding: 12px 16px;
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+/* GroupEditorModal.tsx's own variant: inside a `.modal` (already padded on
+   every side, no edge to edge-to-edge a border-bottom against) rather than
+   a full-width `.screen` toolbar — a bordered inset box instead of a
+   divider strip. */
+.schedule-settings-panel-inset {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  margin-bottom: 12px;
+}
+
+/* ScheduleModal.tsx's Snippets/Pipelines/Groups tab strip — sits between
+   .screen-header and .screen-body, neither of which pads it on its own. */
+.schedule-tabs {
+  margin: 10px 16px 0;
+  flex-shrink: 0;
 }
 
 /* ---------- Approval-gate row (BatchModal.tsx's ResultRow, pipeline 'gate' nodes) ---------- */
@@ -1638,6 +1693,20 @@ kbd {
   margin: 0 0 14px;
   font-size: 16px;
   font-weight: 700;
+}
+
+/* A `.modal`'s own <h2> plus a trailing action button on one line (e.g.
+   GroupEditorModal.tsx's Schedule toggle) — the plain `.modal h2` rule
+   above still applies to the heading nested inside. */
+.modal-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.modal-title-row h2 {
+  margin-bottom: 0;
 }
 
 .field-label {
@@ -2215,6 +2284,7 @@ select.field-input {
 
 .batch-order-name {
   flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2245,6 +2315,8 @@ select.field-input {
 }
 
 .batch-result-name {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2629,6 +2701,11 @@ select.field-input {
   animation: fade-in 0.15s ease both;
 }
 
+/* Applied for exactly one open by useScreenOpenAnimation() (lib/screenAnimation.ts) — a screen-to-screen jump (e.g. Schedule -> a group editor, or back) skips the fade-in, since fading in from transparent would otherwise let the main list flash through while the old screen (gone instantly, no fade-out of its own) and the new one (still transparent) briefly leave nothing opaque on screen. */
+.screen.screen-no-anim {
+  animation: none;
+}
+
 .screen-header {
   display: flex;
   align-items: center;
@@ -2759,6 +2836,18 @@ select.field-input {
   border: 1px solid var(--border);
   font-size: 10.5px;
   color: var(--text-secondary);
+}
+
+/* text-overflow doesn't apply to a flex container's own overflowing content
+   (only to a block-level descendant) — the chip above is `inline-flex`, so
+   the actual ellipsis has to live on this nested name span instead, with
+   the icon given `flex-shrink: 0` so it's never what gets squeezed. */
+.group-card-member-chip-icon {
+  flex-shrink: 0;
+}
+
+.group-card-member-chip-name {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2920,7 +3009,45 @@ select.field-input {
 
 .watch-trigger-fields {
   margin: 6px 0 0 24px;
-  max-width: 260px;
+  max-width: 280px;
+}
+
+/* The file-watch trigger's own fixed-value rows (SettingsModal.tsx's
+   WatchTriggerRow) — stacked label-above-input per placeholder rather than
+   the wider side-by-side layout EditorModal's schedule section uses (.env-row/
+   .schedule-param-name), since this column is much narrower
+   (.watch-trigger-fields caps at 280px) and a fixed 130px name column left
+   the input squeezed down to almost nothing. */
+.watch-trigger-params {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.watch-trigger-params-label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-tertiary);
+}
+
+.watch-trigger-param-row {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.watch-trigger-param-name {
+  font-family: "Cascadia Code", "Consolas", "Courier New", monospace;
+  font-size: 11px;
+  color: var(--text-secondary);
 }
 
 .group-row-name {
@@ -3271,7 +3398,14 @@ select.field-input {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  flex: 1;
+  /* Sized to its own content, same small toolbar-button footprint
+     PipelinesModal.tsx's own "+ Snippet" uses (.btn-small, on the element
+     itself) — was flex:1, stretching to fill the whole row; a picked
+     snippet's name+icon spanning the full field width read oddly next to
+     every other small, content-sized button in the app. Still capped so a
+     very long snippet name ellipsizes instead of blowing out the row. */
+  flex: none;
+  max-width: 260px;
   min-width: 0;
   text-align: left;
 }
@@ -3286,6 +3420,8 @@ select.field-input {
 }
 
 .snippet-picker-field-value {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -3295,8 +3431,15 @@ select.field-input {
 .pipeline-picker-menu {
   display: flex;
   flex-direction: column;
+  /* Sized to its own content (the tag-chip row is usually the widest part)
+     instead of a fixed 230-300px band — that band cut off a library's tag
+     set into an awkward multi-row wrap/scroll well before it needed to.
+     Still clamped so a huge tag set can't blow past the viewport (or make
+     the menu comically wide) — .pipeline-picker-tags keeps its own
+     wrap+scroll for whatever doesn't fit even at the wider cap. */
+  width: max-content;
   min-width: 230px;
-  max-width: 300px;
+  max-width: min(420px, calc(100vw - 24px));
 }
 
 .pipeline-picker-search {
@@ -3346,6 +3489,13 @@ select.field-input {
 
 .pipeline-picker-list::-webkit-scrollbar {
   display: none;
+}
+
+.pipeline-picker-item-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .pipeline-picker-item-tag {

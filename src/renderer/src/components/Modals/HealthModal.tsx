@@ -16,6 +16,7 @@ import { InfoHint } from '../shared/InfoHint';
 import { openModal } from '../../store/useEditorStore';
 import { openDetails } from '../../store/useDetailsStore';
 import { state } from '../../../modules/state';
+import { useScreenOpenAnimation } from '../../lib/screenAnimation';
 
 type IssueKind = 'missing-cwd' | 'dangling-run-before' | 'dangling-run-after' | 'last-run-failed';
 
@@ -117,12 +118,13 @@ export function HealthModal() {
     return () => { cancelled = true; };
   }, [open]);
 
+  const skipAnim = useScreenOpenAnimation(open);
   if (!open) return null;
 
   const totalIssues = results.reduce((n, r) => n + r.issues.length, 0);
 
   return (
-    <div className="screen">
+    <div className={'screen' + (skipAnim ? ' screen-no-anim' : '')}>
       <div className="screen-header">
         <button type="button" className="icon-btn" title="Back" onClick={closeHealth}>
           <ArrowLeft size={16} />

@@ -21,8 +21,9 @@ import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrate
 import { CSS } from '@dnd-kit/utilities';
 import { ShieldQuestion, Check, X } from 'lucide-react';
 import type { Snippet } from '@shared/types';
-import { snippetIcon } from '../../lib/utils';
+import { snippetIcon, collectPlaceholders, collectPlaceholdersUsedBy } from '../../lib/utils';
 import { showToast } from '../../lib/toast';
+import { ParamForm } from '../Card/ParamForm';
 import {
   useBatchStore,
   closeBatchModal,
@@ -68,10 +69,14 @@ function OrderRow({ snippet, index, dropIndicator }: { snippet: Snippet; index: 
 
 function ConfigView() {
   const { order, mode, stopOnError } = useBatchStore();
+  // Every {{placeholder}} name used across the whole batch, collected once
+  // up front — see PipelinesModal.tsx's own param-gate (usePipelineParamGate)
+  // for the identical shape of this pattern. `null` = not gating right now.
+  const [gateNames, setGateNames] = useState<string[] | null>(null);
 
-  async function start() {
+  async function runNow(values?: Record<string, string>) {
     showResultsView();
-    const { ran, skipped, notRun } = await runBatchList(order, mode, { stopOnError });
+    const { ran, skipped, notRun } = await runBatchList(order, mode, { stopOnError, values });
     await persistSnippets();
     state.selectMode = false;
     (state.selectedIds as Set<string>).clear();
@@ -80,6 +85,15 @@ function ConfigView() {
     refresh();
     const extras = [skipped && `${skipped} skipped`, notRun && `${notRun} not run`].filter(Boolean).join(', ');
     showToast(`Batch done: ${ran} ran${extras ? ` · ${extras}` : ''}`);
+  }
+
+  function start() {
+    const names = collectPlaceholders(order);
+    if (names.length > 0) {
+      setGateNames(names);
+      return;
+    }
+    void runNow();
   }
 
   const sensors = useSensors(
@@ -114,7 +128,7 @@ function ConfigView() {
   return (
     <div>
       <h2>Configure batch run</h2>
-      <p className="field-hint">Drag to set the run order. Parameterized snippets are skipped (they need input).</p>
+      <p className="field-hint">Drag to set the run order. A parameterized snippet prompts for its values once, up front.</p>
 
       <label className="field-label">Mode</label>
       <div className="segmented">
@@ -163,6 +177,24 @@ function ConfigView() {
           Run
         </button>
       </div>
+
+      {gateNames && (
+        <div className="modal-overlay" onClick={(e) => { if (e.target === e.currentTarget) setGateNames(null); }}>
+          <div className="modal">
+            <h2>Values for this run</h2>
+            <p className="field-hint">Collected once for every parameterized snippet in this batch — see which snippet each value is for under its name.</p>
+            <ParamForm
+              names={gateNames}
+              usedBy={collectPlaceholdersUsedBy(order)}
+              onCancel={() => setGateNames(null)}
+              onRun={(values) => {
+                setGateNames(null);
+                void runNow(values);
+              }}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

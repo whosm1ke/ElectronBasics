@@ -8,6 +8,9 @@
 // check anywhere in this file, or anywhere in the app — running a command is
 // entirely the caller's responsibility.
 import { execFile } from 'node:child_process';
+import os from 'node:os';
+import path from 'node:path';
+import crypto from 'node:crypto';
 import { psQuote } from '../ps-quote';
 import type { ShellType, RunResult, SshConfig } from '@shared/types';
 
@@ -131,25 +134,59 @@ export function runShellCommand(command: string, options: RunShellCommandOptions
       }
       // Elevated execution: launch a second, elevated PowerShell via
       // Start-Process -Verb RunAs from our own *non-elevated* PowerShell.
-      // Output can't be piped normally across the UAC boundary, so the
-      // elevated child redirects to temp files which the outer script
-      // reads back and stitches together, marker-delimited, once it exits.
+      //
+      // -Verb RunAs goes through ShellExecute under the hood, and
+      // ShellExecute cannot redirect a child's stdout/stderr at all —
+      // combining -Verb with -RedirectStandardOutput/-RedirectStandardError
+      // isn't just unsupported, PowerShell refuses to even start the
+      // command ("Parameter set cannot be resolved using the specified
+      // named parameters"), which is what silently broke Run as
+      // Administrator entirely before this fix (it never got as far as the
+      // UAC prompt). The elevated child has to do its OWN file redirection
+      // instead: the two temp file paths are generated here in Node (not
+      // via PowerShell's own GetTempFileName, so the exact same paths can
+      // be embedded in both scripts without a second round-trip), the
+      // *inner* (elevated) script redirects `1>`/`2>` to them directly, and
+      // the *outer* (non-elevated) script reads them back once
+      // `-Wait -PassThru` (both fine alongside -Verb — only the Redirect*
+      // parameters aren't) confirms the elevated process has exited. The
+      // elevated child's own exit code is appended as a third
+      // marker-delimited segment, read back explicitly — Node's own `error`
+      // from execFile only ever reflects the *outer*, always-succeeds
+      // wrapper script, never the elevated command's real result.
       const innerCommand = (cwd ? `Set-Location -LiteralPath ${psQuote(cwd)}; ` : '') + command;
-      const encoded = Buffer.from(innerCommand, 'utf16le').toString('base64');
-      const fullCommand = [
+      const outFile = path.join(os.tmpdir(), `sniprun-${crypto.randomBytes(8).toString('hex')}.out`);
+      const errFile = path.join(os.tmpdir(), `sniprun-${crypto.randomBytes(8).toString('hex')}.err`);
+      const innerScript = [
         '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8;',
-        '$outFile = [System.IO.Path]::GetTempFileName();',
-        '$errFile = [System.IO.Path]::GetTempFileName();',
+        `& { ${innerCommand} } 1> ${psQuote(outFile)} 2> ${psQuote(errFile)};`,
+        'exit $LASTEXITCODE;',
+      ].join(' ');
+      const innerEncoded = Buffer.from(innerScript, 'utf16le').toString('base64');
+      const fullCommand = [
+        '$code = 1; $outText = ""; $errText = "";',
         'try {',
-        '  Start-Process -FilePath powershell.exe -Verb RunAs -WindowStyle Hidden -Wait ' +
-          '-RedirectStandardOutput $outFile -RedirectStandardError $errFile ' +
-          `-ArgumentList @('-NoProfile','-NonInteractive','-EncodedCommand','${encoded}');`,
-        '  Get-Content -LiteralPath $outFile -Raw -Encoding UTF8;',
-        `  Write-Output '${ELEVATED_MARKER}';`,
-        '  Get-Content -LiteralPath $errFile -Raw -Encoding UTF8;',
+        '  $proc = Start-Process -FilePath powershell.exe -Verb RunAs -WindowStyle Hidden -Wait -PassThru ' +
+          `-ArgumentList @('-NoProfile','-NonInteractive','-EncodedCommand','${innerEncoded}');`,
+        '  $code = $proc.ExitCode;',
+        // The elevated child creates these via `1>`/`2>` even on empty
+        // output — Test-Path only guards the "UAC prompt was dismissed
+        // before the child ever ran" case, where they're never created.
+        `  if (Test-Path -LiteralPath ${psQuote(outFile)}) { $outText = Get-Content -LiteralPath ${psQuote(outFile)} -Raw -Encoding UTF8 };`,
+        `  if (Test-Path -LiteralPath ${psQuote(errFile)}) { $errText = Get-Content -LiteralPath ${psQuote(errFile)} -Raw -Encoding UTF8 };`,
+        '} catch {',
+        // Reached when the UAC prompt itself is dismissed/denied, or
+        // elevation otherwise never happens — surfaces that as this run's
+        // own stderr instead of Node seeing a bare, unexplained exit 1.
+        '  $errText = $_.Exception.Message;',
         '} finally {',
-        '  Remove-Item -LiteralPath $outFile,$errFile -Force -ErrorAction SilentlyContinue;',
+        `  Remove-Item -LiteralPath ${psQuote(outFile)},${psQuote(errFile)} -Force -ErrorAction SilentlyContinue;`,
         '}',
+        'Write-Output $outText;',
+        `Write-Output '${ELEVATED_MARKER}';`,
+        'Write-Output $errText;',
+        `Write-Output '${ELEVATED_MARKER}';`,
+        'Write-Output $code;',
       ].join(' ');
 
       const execOpts = {
@@ -164,18 +201,20 @@ export function runShellCommand(command: string, options: RunShellCommandOptions
         ['-NoProfile', '-NonInteractive', '-Command', fullCommand],
         execOpts,
         (error, stdout, stderr) => {
-          let outText = stdout ? stdout.toString() : '';
-          let errText = stderr ? stderr.toString() : error && !stdout ? error.message : '';
-          if (outText.includes(ELEVATED_MARKER)) {
-            const [outPart, errPart] = outText.split(ELEVATED_MARKER);
-            outText = outPart || '';
-            errText = (errPart || '').trim() || errText;
-          }
-          const result: RunResult = {
-            stdout: outText,
-            stderr: errText,
-            code: error ? (typeof (error as NodeJS.ErrnoException).code === 'number' ? ((error as unknown as { code: number }).code) : 1) : 0,
-          };
+          const outText = stdout ? stdout.toString() : '';
+          const parts = outText.split(ELEVATED_MARKER);
+          const result: RunResult =
+            parts.length === 3
+              ? { stdout: parts[0].trim(), stderr: parts[1].trim(), code: Number.parseInt(parts[2].trim(), 10) || 0 }
+              : {
+                  // The wrapper script itself never ran to completion (a
+                  // syntax error in this file, PowerShell missing
+                  // entirely, …) — fall back to whatever execFile itself
+                  // observed rather than silently reporting success.
+                  stdout: outText,
+                  stderr: stderr ? stderr.toString() : error ? error.message : '',
+                  code: error ? 1 : 0,
+                };
           if (debug) result.debugInfo = { file: 'powershell.exe (elevated wrapper)', args: ['-Command', '<elevation script>'] };
           resolve(result);
         }

@@ -16,7 +16,7 @@ import { closeDetails, isDetailsOpen } from '../store/useDetailsStore';
 import { openHistory, closeHistory, isHistoryOpen } from '../store/useHistoryStore';
 import { closeSettings, isSettingsOpen } from '../store/useSettingsStore';
 import { closeVariables, isVariablesOpen } from '../store/useVariablesStore';
-import { closeGroups, isGroupsOpen } from '../store/useGroupsStore';
+import { closeGroups, isGroupsOpen, closeGroupEditor, isGroupEditorOpen } from '../store/useGroupsStore';
 import { closePipelines, isPipelinesOpen } from '../store/usePipelinesStore';
 import { closeHealth, isHealthOpen } from '../store/useHealthStore';
 import { closeScheduleOverview, isScheduleOverviewOpen } from '../store/useScheduleStore';
@@ -44,6 +44,7 @@ function runCardAt(index: number): void {
 document.addEventListener('keydown', (e) => {
   const anySurfaceOpen =
     isEditorOpen() ||
+    isGroupEditorOpen() ||
     isDetailsOpen() ||
     isHistoryOpen() ||
     isSettingsOpen() ||
@@ -59,6 +60,7 @@ document.addEventListener('keydown', (e) => {
 
   if (e.key === 'Escape') {
     if (isEditorOpen()) closeModal();
+    else if (isGroupEditorOpen()) closeGroupEditor();
     else if (isDetailsOpen()) closeDetails();
     else if (isBatchModalOpen()) closeBatchModal();
     else if (isVariablesOpen()) closeVariables();

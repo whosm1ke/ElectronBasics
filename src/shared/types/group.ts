@@ -8,6 +8,7 @@
 // treated as an error.
 import { z } from 'zod';
 import { newId } from '../id';
+import { ScheduleSchema, ScheduleConfigSchema } from './snippet';
 
 const GroupOutputSchema = z.object({
   id: z.string(),
@@ -16,13 +17,22 @@ const GroupOutputSchema = z.object({
   snippetIds: z.array(z.string()), // deduped, max 200
   runCount: z.number(), // bumped by GroupsModal.tsx's runGroup() — mirrors a snippet's own runCount, gives a group the same "used" signal
   lastRunAt: z.string().nullable(), // ISO timestamp, same convention as Snippet.lastRunAt
+  // Runs every member snippet on a schedule, same shape a snippet's own
+  // `schedule` uses (reused, not redeclared — see main/groupRunner.ts +
+  // scheduler.ts's tick). `paramValues` here is a single flat override dict
+  // applied to whichever member snippet actually has a matching placeholder
+  // name — same "shared overrides across every snippet in the group" model
+  // triggerServer.ts's HTTP group-run endpoint uses for its own query
+  // params, picked over a per-snippet-id dictionary here since the Group
+  // editor has no natural place to collect one sub-form per member.
+  schedule: ScheduleConfigSchema.nullable(),
 });
 export type Group = z.infer<typeof GroupOutputSchema>;
 
 export const GroupSchema = z
   .unknown()
   .transform((raw) => {
-    const g = (raw && typeof raw === 'object' ? raw : {}) as Partial<{ id: unknown; name: unknown; description: unknown; snippetIds: unknown; runCount: unknown; lastRunAt: unknown }>;
+    const g = (raw && typeof raw === 'object' ? raw : {}) as Partial<{ id: unknown; name: unknown; description: unknown; snippetIds: unknown; runCount: unknown; lastRunAt: unknown; schedule: unknown }>;
     const rawIds = Array.isArray(g.snippetIds) ? g.snippetIds : [];
     const snippetIds = [...new Set(rawIds.filter((id): id is string => typeof id === 'string' && Boolean(id)))].slice(0, 200);
     return {
@@ -32,6 +42,7 @@ export const GroupSchema = z
       snippetIds,
       runCount: typeof g.runCount === 'number' && g.runCount >= 0 ? g.runCount : 0,
       lastRunAt: g.lastRunAt ? String(g.lastRunAt) : null,
+      schedule: ScheduleSchema.parse(g.schedule),
     };
   })
   .pipe(GroupOutputSchema);

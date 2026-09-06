@@ -10,6 +10,7 @@ import { ArrowLeft, Copy, Check, RefreshCw, Trash2, BookMarked, FolderOpen, Pale
 import type { TriggerConfig, Library, WatchTrigger, Snippet } from '@shared/types';
 import { ThemedSelect } from '../shared/ThemedSelect';
 import { SnippetPickerField } from '../shared/SnippetPicker';
+import { InfoHint } from '../shared/InfoHint';
 import { newId, extractPlaceholders, runnableTextOf } from '../../lib/utils';
 import { useUiStore, type Theme, type Density } from '../../store/useUiStore';
 import { useSettingsStore, closeSettings, type SettingsCategory } from '../../store/useSettingsStore';
@@ -19,6 +20,7 @@ import { state } from '../../../modules/state';
 import { emitSnippetsChanged } from '../../lib/events';
 import { openVariables } from '../../store/useVariablesStore';
 import { timeAgo } from '../../lib/utils';
+import { useScreenOpenAnimation } from '../../lib/screenAnimation';
 
 const ACCENT_PRESETS = ['#6e8bff', '#8a63f2', '#ff6bcb', '#ff6b6b', '#f5a623', '#e0c341', '#4bd08b', '#3fc7c7'];
 
@@ -314,11 +316,9 @@ function TriggersSection() {
 
   return (
     <div className="settings-section">
-      <div className="settings-section-title">Triggers</div>
-      <p className="field-hint">
-        Run a snippet from outside the launcher — a scheduled task, a CI job, another script on this machine — with a local HTTP call.
-        Loopback-only (never reachable over the network); the token below is required on every request.
-      </p>
+      <div className="settings-section-title">
+        Triggers <InfoHint text="Run a snippet — or a whole saved Group — from outside the launcher with a local HTTP call. Loopback-only; never reachable over the network. See Settings → Help → &quot;HTTP triggers&quot; for the full request/response shapes." />
+      </div>
 
       <label className="checkbox-row" htmlFor="triggerEnabledToggle">
         <input id="triggerEnabledToggle" type="checkbox" checked={config.enabled} onChange={(e) => toggle(e.target.checked)} />
@@ -390,9 +390,9 @@ function TriggersSection() {
         </button>
       </div>
       <p className="field-hint">
-        <code>POST</code> that URL (or set the token via an <code>X-Trigger-Token</code> header instead of the query string) with a real
-        snippet id in place of <code>&lt;snippetId&gt;</code> — copy a snippet's id from its Details panel. A snippet with unresolved{' '}
-        <code>{'{{placeholder}}'}</code> tokens is refused, same as scheduled/batch runs.
+        <code>POST</code> that URL with a real snippet id in place of <code>&lt;snippetId&gt;</code> (copy it from the snippet's Details
+        panel), or <code>POST .../run-group/&lt;groupId&gt;</code> to trigger a whole saved Group instead — see Settings → Help →
+        "HTTP triggers" for the full request/response shapes (query params, JSON body, group runs).
       </p>
     </div>
   );
@@ -475,11 +475,9 @@ function LibrariesSection() {
 
   return (
     <div className="settings-section">
-      <div className="settings-section-title">Shared libraries</div>
-      <p className="field-hint">
-        Subscribe to a URL that serves a JSON array of snippets (the same shape as an exported snippets file) — its snippets are merged in
-        read-mostly, tagged with where they came from, and refreshed on demand. Removing a subscription removes the snippets it added, too.
-      </p>
+      <div className="settings-section-title">
+        Shared libraries <InfoHint text="Subscribe to a URL serving a JSON array of snippets (same shape as an exported snippets file) — merged in read-mostly, tagged with where they came from, refreshed on demand. Removing a subscription removes the snippets it added, too. See Settings → Help → &quot;Libraries&quot; for the full walkthrough." />
+      </div>
       <div className="hotkey-row">
         <input
           type="text"
@@ -525,30 +523,34 @@ function WatchTriggerRow({ trigger, snippets, onChange, onRemove }: { trigger: W
         </label>
         <div className="watch-trigger-fields">
           <SnippetPickerField value={trigger.snippetId} onChange={(snippetId) => onChange({ snippetId })} snippets={snippets} />
-        </div>
-        {placeholderNames.length > 0 && (
-          <div className="env-list">
-            {placeholderNames.map((name) => (
-              <div className="env-row" key={name}>
-                <span className="schedule-param-name">{`{{${name}}}`}</span>
-                <input
-                  type="text"
-                  className="field-input env-value-input"
-                  placeholder="uses a global variable if left blank"
-                  value={trigger.paramValues?.[name] || ''}
-                  onChange={(e) => setParamValue(name, e.target.value)}
-                />
+          {placeholderNames.length > 0 && (
+            <div className="watch-trigger-params">
+              <div className="watch-trigger-params-label">
+                Fixed values
+                <InfoHint text="Optional, per-placeholder — checked before falling back to a saved global variable of the same name." size={11} />
               </div>
-            ))}
-          </div>
-        )}
+              {placeholderNames.map((name) => (
+                <div className="watch-trigger-param-row" key={name}>
+                  <span className="watch-trigger-param-name">{`{{${name}}}`}</span>
+                  <input
+                    type="text"
+                    className="field-input"
+                    placeholder="uses a global variable if left blank"
+                    value={trigger.paramValues?.[name] || ''}
+                    onChange={(e) => setParamValue(name, e.target.value)}
+                  />
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
       <button
         type="button"
         className="btn btn-small"
         title="Choose a file or folder"
         onClick={async () => {
-          const res = await window.electronAPI.pickWatchPath();
+          const res = await window.electronAPI.pickWatchPath(trigger.path || undefined);
           if (res.ok && res.path) onChange({ path: res.path });
         }}
       >
@@ -575,8 +577,9 @@ function WatchTriggersSection() {
 
   return (
     <div className="settings-section">
-      <div className="settings-section-title">File-watch triggers</div>
-      <p className="field-hint">Run a snippet automatically whenever a chosen file or folder changes — a rebuild-on-save, for example.</p>
+      <div className="settings-section-title">
+        File-watch triggers <InfoHint text="Run a snippet automatically whenever a chosen file or folder changes — a rebuild-on-save, for example. See Settings → Help → &quot;File-watch triggers&quot; for debounce and placeholder-value details." />
+      </div>
       {triggers.length > 0 && (
         <div className="groups-list" style={{ marginBottom: 8 }}>
           {triggers.map((t) => (
@@ -722,13 +725,14 @@ const HELP_TOPICS: HelpTopic[] = [
   },
   {
     id: 'schedule',
-    title: 'Scheduling a snippet',
-    summary: 'Run a snippet automatically on an interval, daily at a set time, or on a cron expression.',
+    title: 'Scheduling a snippet, pipeline, or group',
+    summary: 'Run a snippet, a whole pipeline, or a whole group automatically on an interval, daily at a set time, or on a cron expression.',
     steps: [
-      'Open a snippet\'s editor, turn on "Run on a schedule".',
-      'Pick Interval / Daily / Cron and fill in its one field.',
-      'Save — the Schedule screen (header icon) now lists it, soonest-due first, with an Edit/Run now action on each row.',
-      'A scheduled snippet with an unresolved {{placeholder}} pulls its value from a matching saved global variable instead of failing — see "Global variables" above.',
+      'Snippet: open its editor, turn on "Run on a schedule". Pipeline: open it, click the toolbar\'s "Settings" button, turn on "Run this whole pipeline on a schedule". Group: open it, click the header\'s "Schedule" button, turn on "Run every snippet in this group on a schedule".',
+      'Pick Interval / Daily / Cron and fill in its one field, same control everywhere.',
+      'Save — the Schedule screen (header icon) now lists it under its own tab (Snippets / Pipelines / Groups), soonest-due first, with an Edit action (and, for snippets and groups, a "Run now" action too).',
+      'An unresolved {{placeholder}} anywhere in a scheduled run — a snippet\'s own, a pipeline step\'s, or a group member\'s — pulls its value from a matching saved global variable instead of failing; a group\'s schedule can additionally set its own fixed override values, applied to whichever member snippet actually has a matching placeholder name — see "Global variables" above.',
+      'A pipeline\'s "gate" node always auto-skips on a scheduled run — there\'s nowhere to ask for manual approval unattended.',
     ],
   },
   {
@@ -739,6 +743,12 @@ const HELP_TOPICS: HelpTopic[] = [
       'Settings → Automation → enable the trigger server.',
       'Copy the token (and the example URL, prefilled with the port and token).',
       'POST that URL with a real snippet id in place of <snippetId> — copy the id from the snippet\'s Details panel.',
+      'To fill in {{placeholder}}s for that one call specifically (without saving a global variable): add them as extra query params, e.g. ...&target=prod — anything besides token is treated as a placeholder value.',
+      'Or send a JSON body instead: POST with Content-Type: application/json and a body of {"values": {"target": "prod"}} (a plain {"target": "prod"} body works too).',
+      'Query params and a JSON body can be combined — the JSON body wins if the same name appears in both. Still falls back to a saved global variable for any name neither one sets.',
+      'To run a whole Group instead of one snippet: POST to .../run-group/<groupId> (copy the id from the group\'s editor) — every member snippet runs, one aggregate notification and JSON response covers the whole group.',
+      'A group run\'s JSON body values are nested one level deeper, keyed by snippet id: {"values": {"<snippetId>": {"target": "prod"}, "<otherSnippetId>": {"count": "3"}}} — query params still apply to every snippet in the group that has a matching placeholder name.',
+      'The response lists a per-snippet result (ok/exitCode, or skipped with the missing names) — status 200 if every member ran cleanly, 207 if any one was skipped or failed.',
       'Loopback-only by design (127.0.0.1) — never reachable from another machine.',
     ],
   },
@@ -933,6 +943,17 @@ const HELP_TOPICS: HelpTopic[] = [
     ],
   },
   {
+    id: 'dev-mode',
+    title: 'Developer mode',
+    summary: 'Shows exactly what this app actually handed to Windows for a run — the real executable and arguments, not just the command you typed.',
+    steps: [
+      'Settings → Behavior → turn on "Developer mode".',
+      'Run any snippet, then look right under its output — a new line shows the literal file (e.g. powershell.exe) and argv this app invoked for that run.',
+      'Useful for the rare case where a command behaves differently here than when you type it yourself into a terminal — this shows exactly how it was quoted/wrapped for that shell, which is often the actual difference.',
+      'Off by default since most runs don\'t need it — it adds a line to every single output panel.',
+    ],
+  },
+  {
     id: 'updates',
     title: 'Checking for updates',
     summary: 'Nothing updates itself in the background — checking, downloading, and installing are three separate, explicit clicks.',
@@ -995,10 +1016,11 @@ export function SettingsModal() {
     if (open) setCategory(initialCategory);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
+  const skipAnim = useScreenOpenAnimation(open);
   if (!open) return null;
 
   return (
-    <div className="screen">
+    <div className={'screen' + (skipAnim ? ' screen-no-anim' : '')}>
       <div className="screen-header">
         <button type="button" className="icon-btn" title="Back" onClick={closeSettings}>
           <ArrowLeft size={16} />

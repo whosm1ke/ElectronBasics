@@ -5,8 +5,10 @@
 import { Cron } from 'croner';
 import { readSnippets, writeSnippets } from './storage/snippets';
 import { readPipelines, writePipelines } from './storage/pipelines';
+import { readGroups, writeGroups } from './storage/groups';
 import { runUnattended } from './unattendedRun';
 import { runScheduledPipeline } from './pipelineRunner';
+import { runScheduledGroup } from './groupRunner';
 import type { ScheduleConfig } from '@shared/types';
 
 const SCHEDULE_CHECK_INTERVAL_MS = 30 * 1000;
@@ -87,6 +89,25 @@ export async function tickScheduler(): Promise<void> {
     if (pipelinesChanged) writePipelines(pipelines);
   } catch (err) {
     console.error('Scheduler pipeline tick failed:', err);
+  }
+
+  try {
+    const groups = readGroups();
+    const now = new Date();
+    let groupsChanged = false;
+    for (const group of groups) {
+      if (!group.schedule || !group.schedule.enabled) continue;
+      if (!isScheduleDue(group.schedule, now)) continue;
+      // eslint-disable-next-line no-await-in-loop
+      await runScheduledGroup(group);
+      group.schedule.lastRunAt = new Date().toISOString();
+      group.lastRunAt = group.schedule.lastRunAt;
+      group.runCount = (group.runCount || 0) + 1;
+      groupsChanged = true;
+    }
+    if (groupsChanged) writeGroups(groups);
+  } catch (err) {
+    console.error('Scheduler group tick failed:', err);
   }
 }
 

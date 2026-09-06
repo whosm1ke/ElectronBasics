@@ -45,10 +45,13 @@ export function emitBatchModalClosed(): void {
 }
 
 /**
- * Fired whenever the Add/Edit snippet modal closes (Cancel, Save, or
- * Escape) — used by useDetailsStore.ts to reopen Details for wherever the
- * editor was navigated FROM (via a "Runs before it"/"Runs after it" link).
- * A listener with nothing pending just no-ops.
+ * Fired whenever an editor modal closes (Cancel/Save/Escape) that Details
+ * can be navigated away to — the Add/Edit snippet modal (a "Runs before
+ * it"/"Runs after it" link) and the group editor modal (an "in group"
+ * link, GroupsModal.tsx's own closeGroupEditor()) both fire this on close.
+ * useDetailsStore.ts's own subscription reopens Details for wherever the
+ * editor was navigated FROM; a listener with nothing pending just no-ops,
+ * so either editor firing this unconditionally on every close is fine.
  */
 export function onEditorClosed(handler: Handler): void {
   bus.addEventListener(EDITOR_CLOSED, handler);

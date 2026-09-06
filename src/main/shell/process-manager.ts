@@ -120,6 +120,7 @@ function spawnChild(record: ProcessRecord): void {
     child.stdout?.on('data', (chunk: Buffer) => send('process-output', { snippetId, stream: 'stdout', chunk: chunk.toString('utf8') }));
     child.stderr?.on('data', (chunk: Buffer) => send('process-output', { snippetId, stream: 'stderr', chunk: chunk.toString('utf8') }));
     child.on('error', (err) => {
+      if (record.child !== child) return; // stale — see the 'exit' handler's own comment just below
       if (!startedOk && (err as NodeJS.ErrnoException).code === 'ENOENT' && i < candidates.length) {
         tryNext();
         return;
@@ -128,6 +129,18 @@ function spawnChild(record: ProcessRecord): void {
       send('process-status', { snippetId, status: 'error', message: String((err as Error).message || err) });
     });
     child.on('exit', (code, signal) => {
+      // restartProcess() kills the old child via taskkill and immediately
+      // spawns a new one once that command's own process exits — it does
+      // NOT wait for *this* old child's own 'exit' event, which Node can
+      // still deliver a moment later. By then `record.child` already points
+      // at the new child spawnChild() just created; without this guard,
+      // this now-stale event would null out record.child/pid out from under
+      // the new (genuinely still-running) process — Stop would then find
+      // nothing to kill (leaking it), and this handler's own exit-code
+      // logic would report the *old* process's death as this record's
+      // current status (a bogus "crashed", sometimes even kicking off an
+      // auto-restart for a process that was never actually meant to stop).
+      if (record.child !== child) return;
       record.child = null;
       record.pid = null;
       clearTimers(record);

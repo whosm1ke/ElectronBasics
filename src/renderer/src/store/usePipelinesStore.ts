@@ -8,6 +8,7 @@
 // migration plan's canvas-drag escape hatch needs it local, not global).
 import { create } from 'zustand';
 import type { Pipeline } from '@shared/types';
+import { reopenScreen, type ScreenReturnTarget } from '../lib/screenReturn';
 
 interface PipelinesState {
   open: boolean;
@@ -20,9 +21,22 @@ interface PipelinesState {
   // results modal, reopen once that's dismissed" apart from "the user backed
   // out on purpose, leave it closed."
   pendingReopen: boolean;
+  // Set only by openPipelineEditorByIdFrom() — which screen this editor was
+  // opened from (Details' "used in pipeline" link, the Schedule screen's own
+  // Edit button, …), so closing it jumps straight back there instead of the
+  // plain pipelines list. Mirrors useGroupsStore.ts's identical field — see
+  // lib/screenReturn.ts's own header comment.
+  returnTo: ScreenReturnTarget | null;
 }
 
-const useStore = create<PipelinesState>(() => ({ open: false, view: 'list', editingId: null, pipelines: [], pendingReopen: false }));
+const useStore = create<PipelinesState>(() => ({
+  open: false,
+  view: 'list',
+  editingId: null,
+  pipelines: [],
+  pendingReopen: false,
+  returnTo: null,
+}));
 
 export function usePipelinesStore(): PipelinesState {
   return useStore();
@@ -48,15 +62,29 @@ export function openPipelineEditor(pipeline: Pipeline | null): void {
  */
 export async function openPipelineEditorById(pipelineId: string): Promise<void> {
   const pipelines = await window.electronAPI.getPipelines();
-  useStore.setState({ open: true, view: 'editor', editingId: pipelineId, pipelines });
+  useStore.setState({ open: true, view: 'editor', editingId: pipelineId, pipelines, returnTo: null });
+}
+
+/** Same as openPipelineEditorById, but for a link that should come from — and return to — some other screen (Details' "used in pipeline" link, the Schedule screen's own Edit button, …): closing this editor jumps straight back to `returnTo` instead of landing on the plain pipelines list. */
+export async function openPipelineEditorByIdFrom(pipelineId: string, returnTo: ScreenReturnTarget): Promise<void> {
+  const pipelines = await window.electronAPI.getPipelines();
+  useStore.setState({ open: true, view: 'editor', editingId: pipelineId, pipelines, returnTo });
 }
 
 export function showPipelinesListView(): void {
   useStore.setState({ view: 'list', editingId: null });
 }
 
+/** The editor's own Back button: the plain pipelines list, unless this editor was opened via openPipelineEditorByIdFrom(), in which case it closes straight through to that screen instead. */
+export function backFromPipelineEditor(): void {
+  if (useStore.getState().returnTo) closePipelines();
+  else showPipelinesListView();
+}
+
 export function closePipelines(): void {
-  useStore.setState({ open: false });
+  const { returnTo } = useStore.getState();
+  useStore.setState({ open: false, returnTo: null });
+  reopenScreen(returnTo);
 }
 
 /** Same as closePipelines(), but for the "hand off to a run's results modal" case — see pendingReopen's comment above. `view`/`editingId` are left untouched (already the case for a plain closePipelines()), so reopening lands back exactly where the run started from. */

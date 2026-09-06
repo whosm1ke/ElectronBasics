@@ -31,7 +31,15 @@ const MAX_NODES = 50;
 // prompting outside an attended context" rule as a parameterized snippet.
 // 'pipeline' (`subPipelineId`): runs another saved pipeline inline and
 // treats it as a single node whose result reflects that sub-run as a whole.
-export const VALID_NODE_KINDS = ['step', 'delay', 'gate', 'pipeline'] as const;
+// 'group' (`groupId`): runs every member of a saved Group inline (each its
+// own visible row/step, not collapsed the way a sub-pipeline is), and — like
+// 'pipeline' — reports the whole thing as one outcome for its own outgoing
+// edges: success iff every member that actually ran (i.e. wasn't itself
+// skipped for a missing placeholder) exited 0. Unlike 'pipeline', a 'group'
+// node can never create a reference cycle — a Group only ever points at
+// snippets, never at another Group or a Pipeline — so this needed none of
+// pipelineReferenceCreatesCycle()'s save-time/pick-time cycle guards.
+export const VALID_NODE_KINDS = ['step', 'delay', 'gate', 'pipeline', 'group'] as const;
 export type NodeKind = (typeof VALID_NODE_KINDS)[number];
 
 export const VALID_JOIN_MODES = ['any', 'all'] as const;
@@ -42,8 +50,9 @@ const PipelineNodeOutputSchema = z.object({
   kind: z.enum(VALID_NODE_KINDS),
   snippetId: z.string(), // 'step' only
   subPipelineId: z.string(), // 'pipeline' only
+  groupId: z.string(), // 'group' only
   delaySeconds: z.number(), // 'delay' only, >=1
-  label: z.string(), // 'delay'/'gate'/'pipeline' only — a short caption ("Wait 30s", "Approve deploy?")
+  label: z.string(), // 'delay'/'gate'/'pipeline'/'group' only — a short caption ("Wait 30s", "Approve deploy?")
   retries: z.number(), // 'step' only, 0-10 extra attempts after the first
   retryDelaySeconds: z.number(), // 'step' only, >=0
   // 'any' (default): fires the first time ANY satisfied incoming edge
@@ -66,6 +75,7 @@ const PipelineNodeSchema = z
       kind,
       snippetId: String(n.snippetId ?? ''),
       subPipelineId: String(n.subPipelineId ?? ''),
+      groupId: String(n.groupId ?? ''),
       delaySeconds: Number.isFinite(n.delaySeconds) ? Math.min(3600, Math.max(1, Math.round(n.delaySeconds as number))) : 5,
       label: String(n.label ?? '').slice(0, 200),
       retries: Number.isFinite(n.retries) ? Math.min(10, Math.max(0, Math.round(n.retries as number))) : 0,
@@ -139,12 +149,13 @@ export const PipelineSchema = z
     const nodes = rawNodes
       .map((n) => PipelineNodeSchema.parse(n))
       // A 'step' node with nothing to run is dead weight (same rule as
-      // before this schema grew other kinds) — every other kind is
-      // self-contained (a delay/gate needs no external pointer, and a
-      // dangling `subPipelineId` is caught at resolve-time, not here, the
-      // same way a step's dangling snippetId is skipped at resolve-time
-      // too, not filtered out at the schema level).
-      .filter((n) => n.kind !== 'step' || n.snippetId)
+      // before this schema grew other kinds), and a freshly-added 'group'
+      // node with no group picked yet is exactly as pointless — every OTHER
+      // kind is self-contained (a delay/gate needs no external pointer, and
+      // a dangling `subPipelineId`/`groupId` is caught at resolve-time, not
+      // here, the same way a step's dangling snippetId is skipped at
+      // resolve-time too, not filtered out at the schema level).
+      .filter((n) => (n.kind !== 'step' || n.snippetId) && (n.kind !== 'group' || n.groupId))
       .slice(0, MAX_NODES);
     const nodeIds = new Set(nodes.map((n) => n.id));
 

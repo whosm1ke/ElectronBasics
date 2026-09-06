@@ -10,6 +10,7 @@
 import { readPipelines } from './storage/pipelines';
 import { readSnippets, writeSnippets } from './storage/snippets';
 import { readVariables } from './storage/variables';
+import { readGroups } from './storage/groups';
 import { appendHistory } from './storage/history';
 import { walkPipeline, withRetries, sleep, type NodeOutcome } from '@shared/pipelineWalk';
 import { newId } from '@shared/id';
@@ -52,6 +53,34 @@ async function runPipelineUnattended(
       nextVisited.add(sub.id);
       const subStats = await runPipelineUnattended(sub, snippets, variables, nextVisited, paramValues);
       return { kind: 'ran', result: { code: subStats.success ? 0 : 1, stdout: '', stderr: '' } };
+    }
+
+    if (node.kind === 'group') {
+      const groups = readGroups();
+      const group = groups.find((g) => g.id === node.groupId);
+      if (!group) return { kind: 'skipped' };
+      const members = group.snippetIds.map((id) => snippets.find((s) => s.id === id)).filter((s): s is Snippet => Boolean(s));
+      if (members.length === 0) return { kind: 'skipped' };
+      // Sequential, same as every other "run a group unattended" path in
+      // this app (triggerServer.ts's /run-group, main/groupRunner.ts) —
+      // and success iff every member that actually ran (not itself skipped
+      // for a missing placeholder) succeeded, same "aggregate as one
+      // RunResult" rule the 'pipeline' case above uses for its own sub-run.
+      let anyRan = false;
+      let allOk = true;
+      for (const original of members) {
+        const resolved = hasUnresolvedPlaceholder(original) ? resolveSnippetForUnattended(original, variables, paramValues) : { snippet: original, missing: [] };
+        if (resolved.missing.length > 0) continue;
+        // eslint-disable-next-line no-await-in-loop
+        const result = await executeSnippetOnce(resolved.snippet);
+        if (original.captures) applyCaptures(original, `${result.stdout}\n${result.stderr}`);
+        original.runCount = (original.runCount || 0) + 1;
+        original.lastRunAt = new Date().toISOString();
+        anyRan = true;
+        if (result.code !== 0) allOk = false;
+      }
+      if (!anyRan) return { kind: 'skipped' };
+      return { kind: 'ran', result: { code: allOk ? 0 : 1, stdout: '', stderr: '' } };
     }
 
     // 'step'

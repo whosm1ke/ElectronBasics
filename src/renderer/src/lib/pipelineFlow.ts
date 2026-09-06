@@ -18,13 +18,24 @@ export type StepNodeData = { kind: 'step'; snippetId: string };
 export type DelayNodeData = { kind: 'delay'; delaySeconds: number; label: string };
 export type GateNodeData = { kind: 'gate'; label: string };
 export type SubPipelineNodeData = { kind: 'pipeline'; subPipelineId: string; label: string };
-export type PipelineFlowNodeData = StepNodeData | DelayNodeData | GateNodeData | SubPipelineNodeData;
+export type GroupNodeData = { kind: 'group'; groupId: string; label: string };
+export type PipelineFlowNodeData = StepNodeData | DelayNodeData | GateNodeData | SubPipelineNodeData | GroupNodeData;
 
 export type StepNode = Node<StepNodeData, 'step'>;
 export type DelayNode = Node<DelayNodeData, 'delay'>;
 export type GateNode = Node<GateNodeData, 'gate'>;
 export type SubPipelineFlowNode = Node<SubPipelineNodeData, 'pipeline'>;
-export type FlowNode = StepNode | DelayNode | GateNode | SubPipelineFlowNode;
+// React Flow's own `type` here — NOT the same thing as PipelineNode.kind
+// above, which stays 'group' — has to avoid the literal string 'group':
+// @xyflow/react reserves that exact type name for its own built-in
+// parent/container node feature and ships default CSS for it (a visible
+// border), which silently applied itself on top of .pipeline-mini-node's
+// own styling the moment this node type was named 'group' too. 'groupRun'
+// sidesteps the collision; nothing else about this node kind's own
+// vocabulary (PipelineNode.kind, GroupNodeData.kind, groupId, …) needed to
+// change, since only the flow-node type string was ever ambiguous with it.
+export type GroupFlowNode = Node<GroupNodeData, 'groupRun'>;
+export type FlowNode = StepNode | DelayNode | GateNode | SubPipelineFlowNode | GroupFlowNode;
 
 // onSelect/onRemove ride along on the edge's own data rather than being
 // wired up separately: PipelineConditionEdge.tsx's label renders through
@@ -49,6 +60,15 @@ export const NODE_HEIGHT = 76;
 export const SMALL_NODE_HEIGHT = 52;
 
 function heightFor(kind: NodeKind): number {
+  // 'group' renders as a .pipeline-mini-node (PipelineGroupNode.tsx) — the
+  // exact same short, one-line box delay/gate/pipeline already use, NOT the
+  // taller avatar-style .pipeline-step-node — so it needs SMALL_NODE_HEIGHT
+  // like they get, not NODE_HEIGHT. Declaring the wrong (taller) height here
+  // left an empty rectangle below the actual pill (the declared box is what
+  // React Flow sizes the node wrapper AND positions its connection handles
+  // against — see toFlowNode()'s own `measured` comment on why this value
+  // has to be exactly right, not just close), and put the handles below the
+  // pill's real vertical center instead of centered on it.
   return kind === 'step' || kind === 'pipeline' ? NODE_HEIGHT : SMALL_NODE_HEIGHT;
 }
 
@@ -85,6 +105,8 @@ export function toFlowNode(n: PipelineNode, selectedId: string | null): FlowNode
       return { ...base, type: 'gate', data: { kind: 'gate', label: n.label } };
     case 'pipeline':
       return { ...base, type: 'pipeline', data: { kind: 'pipeline', subPipelineId: n.subPipelineId, label: n.label } };
+    case 'group':
+      return { ...base, type: 'groupRun', data: { kind: 'group', groupId: n.groupId, label: n.label } };
     default:
       return { ...base, type: 'step', data: { kind: 'step', snippetId: n.snippetId } };
   }
@@ -100,7 +122,7 @@ export function toFlowNode(n: PipelineNode, selectedId: string | null): FlowNode
  */
 export function fromFlowNode(n: FlowNode, existing: PipelineNode | undefined): PipelineNode {
   const fallback: PipelineNode = {
-    id: n.id, kind: n.data.kind, snippetId: '', subPipelineId: '', delaySeconds: 5, label: '',
+    id: n.id, kind: n.data.kind, snippetId: '', subPipelineId: '', groupId: '', delaySeconds: 5, label: '',
     retries: 0, retryDelaySeconds: 5, joinMode: 'any', x: n.position.x, y: n.position.y,
   };
   const merged = existing ? { ...existing } : fallback;
@@ -111,6 +133,7 @@ export function fromFlowNode(n: FlowNode, existing: PipelineNode | undefined): P
   else if (n.data.kind === 'delay') { merged.delaySeconds = n.data.delaySeconds; merged.label = n.data.label; }
   else if (n.data.kind === 'gate') merged.label = n.data.label;
   else if (n.data.kind === 'pipeline') { merged.subPipelineId = n.data.subPipelineId; merged.label = n.data.label; }
+  else if (n.data.kind === 'group') { merged.groupId = n.data.groupId; merged.label = n.data.label; }
   return merged;
 }
 

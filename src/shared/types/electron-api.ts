@@ -80,7 +80,7 @@ export interface ElectronAPI {
 
   getWatchTriggers(): Promise<WatchTrigger[]>;
   saveWatchTriggers(triggers: WatchTrigger[]): Promise<WatchTrigger[]>;
-  pickWatchPath(): Promise<{ ok: boolean; path?: string }>;
+  pickWatchPath(defaultPath?: string): Promise<{ ok: boolean; path?: string }>;
 
   openPath(targetPath: string): Promise<OkResult>;
   pathExists(targetPath: string): Promise<boolean>;

@@ -174,7 +174,7 @@ export function SnippetPickerMenu({ picker, onClose }: { picker: SnippetPickerSt
         ) : (
           visible.map((item) => (
             <button type="button" key={item.id} className="context-menu-item" onClick={() => pick(item.id)}>
-              <span>{item.label}</span>
+              <span className="pipeline-picker-item-label">{item.label}</span>
               {item.tag && <span className="pipeline-picker-item-tag">{item.tag}</span>}
             </button>
           ))
@@ -263,7 +263,7 @@ export function SnippetPickerField({ value, onChange, snippets, placeholder = 'P
     <div className="snippet-picker-field-wrap">
       <button
         type="button"
-        className="btn snippet-picker-field-btn"
+        className="btn btn-small snippet-picker-field-btn"
         onClick={(e) => setPicker({ anchor: e.currentTarget.getBoundingClientRect(), items: snippetPickerItems(snippets), emptyLabel, onPick: onChange })}
       >
         <span className="snippet-picker-field-value">{current ? <>{snippetIcon(current)} {current.name}</> : placeholder}</span>

@@ -10,8 +10,10 @@ import { Toaster } from 'sonner';
 import { HistoryDrawer } from './components/Modals/HistoryDrawer';
 import { VariablesModal } from './components/Modals/VariablesModal';
 import { DetailsModal } from './components/Modals/DetailsModal';
+import { GroupDetailsModal } from './components/Modals/GroupDetailsModal';
 import { EditorModal } from './components/Modals/EditorModal';
 import { GroupsModal } from './components/Modals/GroupsModal';
+import { GroupEditorModal } from './components/Modals/GroupEditorModal';
 import { SettingsModal } from './components/Modals/SettingsModal';
 import { BatchModal } from './components/Modals/BatchModal';
 import { PipelinesModal } from './components/Modals/PipelinesModal';
@@ -35,8 +37,10 @@ export function App() {
       <HistoryDrawer />
       <VariablesModal />
       <DetailsModal />
+      <GroupDetailsModal />
       <EditorModal />
       <GroupsModal />
+      <GroupEditorModal />
       <SettingsModal />
       <BatchModal />
       <PipelinesModal />

@@ -19,9 +19,15 @@ interface ParamFormProps {
   names: string[];
   onRun: (values: Record<string, string>) => void;
   onCancel: () => void;
+  // Which snippet(s) each name actually belongs to — a batch/group run or a
+  // pipeline collects every {{placeholder}} across several snippets into
+  // this ONE shared form up front, and without this it's not obvious which
+  // field feeds which snippet. Omitted by Card.tsx's own inline per-card
+  // form, where that's already obvious (there's only ever one snippet).
+  usedBy?: Record<string, string[]>;
 }
 
-export function ParamForm({ names, onRun, onCancel }: ParamFormProps) {
+export function ParamForm({ names, onRun, onCancel, usedBy }: ParamFormProps) {
   const variables = state.variables as Variable[];
   const [values, setValues] = useState<Record<string, string>>(() => {
     const initial: Record<string, string> = {};
@@ -42,9 +48,17 @@ export function ParamForm({ names, onRun, onCancel }: ParamFormProps) {
     <div className="param-form" onClick={(e) => e.stopPropagation()}>
       {names.map((name, i) => {
         const known = variables.find((v) => v.name === name);
+        const owners = usedBy?.[name];
         return (
           <div className="param-row" key={name}>
-            <label>{name}</label>
+            <label className="param-row-label">
+              <span className="param-row-name">{name}</span>
+              {owners && owners.length > 0 && (
+                <span className="param-row-usedby" title={owners.join(', ')}>
+                  for {owners.join(', ')}
+                </span>
+              )}
+            </label>
             <input
               ref={i === 0 ? firstInputRef : undefined}
               type={known?.secret ? 'password' : 'text'}

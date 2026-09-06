@@ -7,7 +7,7 @@
 // batch-runner.js's DOM-handle functions before; see that file).
 import { create } from 'zustand';
 import type { Snippet, RunResult } from '@shared/types';
-import { newId, prettyMaybeJson, runnableTextOf, extractPlaceholders } from '../lib/utils';
+import { newId, prettyMaybeJson, runnableTextOf, extractPlaceholders, substituteAll } from '../lib/utils';
 import { emitBatchModalClosed } from '../lib/events';
 import { state as legacyState } from '../../modules/state';
 
@@ -183,6 +183,15 @@ export async function runOne(snippet: Snippet): Promise<RunResult> {
   });
 }
 
+/** Substitutes every `{{name}}` in `snippet`'s command/steps against `values` — same shape as pipelineEngine.ts's own per-run substitution, just for a plain snippet rather than a pipeline step. */
+function withValuesApplied(snippet: Snippet, values: Record<string, string>): Snippet {
+  return {
+    ...snippet,
+    command: substituteAll(snippet.command, values),
+    steps: snippet.steps ? snippet.steps.map((s) => substituteAll(s, values)) : snippet.steps,
+  };
+}
+
 /**
  * Runs `list` (sequential or parallel per `mode`), populating the store's
  * `rows` with one live row per snippet as it goes. Bumps each ran
@@ -190,22 +199,35 @@ export async function runOne(snippet: Snippet): Promise<RunResult> {
  * caller is still responsible for persisting and re-rendering afterward.
  * `stopOnError` (sequential mode only) halts the run after the first
  * snippet failure, marking the rest "not run" instead of executing them.
+ *
+ * `values` (from BatchModal.tsx's own param-gate, collected once up front —
+ * see collectPlaceholders() in lib/utils.ts) resolves a parameterized
+ * snippet's `{{name}}`s before it runs; a name this run has no value for
+ * still skips that one snippet outright, same as before `values` existed.
  */
 export async function runBatchList(
   list: Snippet[],
   mode: BatchMode,
-  { stopOnError = false }: { stopOnError?: boolean } = {}
+  { stopOnError = false, values }: { stopOnError?: boolean; values?: Record<string, string> } = {}
 ): Promise<{ total: number; ran: number; skipped: number; notRun: number }> {
   resetRows();
 
   const rows = list.map((snippet) => ({ snippet, id: addRow(snippet) }));
 
-  const runnable = rows.filter(({ snippet }) => extractPlaceholders(runnableTextOf(snippet)).length === 0);
-  rows.filter(({ snippet }) => extractPlaceholders(runnableTextOf(snippet)).length > 0).forEach(({ id }) => setRowSkipped(id));
+  function resolve(snippet: Snippet): Snippet | null {
+    const names = extractPlaceholders(runnableTextOf(snippet));
+    if (names.length === 0) return snippet;
+    if (!values || names.some((n) => !values[n])) return null;
+    return withValuesApplied(snippet, values);
+  }
 
-  async function runAndMark({ snippet, id }: { snippet: Snippet; id: string }): Promise<boolean> {
+  const resolved = rows.map((r) => ({ ...r, resolved: resolve(r.snippet) }));
+  const runnable = resolved.filter((r): r is typeof r & { resolved: Snippet } => r.resolved !== null);
+  resolved.filter((r) => r.resolved === null).forEach(({ id }) => setRowSkipped(id));
+
+  async function runAndMark({ snippet, resolved, id }: { snippet: Snippet; resolved: Snippet; id: string }): Promise<boolean> {
     setRowRunning(id);
-    const result = await runOne(snippet);
+    const result = await runOne(resolved);
     const success = setRowDone(id, result);
     const snippets = legacyState.snippets as Snippet[];
     const target = snippets.find((x) => x.id === snippet.id);

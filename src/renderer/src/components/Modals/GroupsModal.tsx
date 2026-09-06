@@ -6,21 +6,23 @@
 // Kept the component/file name (not renamed to GroupsScreen.tsx) to avoid
 // unrelated import churn, even though it's no longer modal-shaped.
 //
-// Two views (list/editor) in one screen, same list/editor split
-// PipelinesModal.tsx's own screen uses. Still calls straight into
-// batch-runner.js's openBatchConfig (not yet ported) to actually run a
-// group — same as the original.
-import { useState } from 'react';
-import { ArrowLeft, Play, Pencil, Layers, Copy } from 'lucide-react';
+// Just the list view now — the editor moved out to its own GroupEditorModal.tsx
+// (a `.modal`, opened via useGroupsStore.ts's openGroupEditor()) since a
+// focused add/edit form doesn't need a full screen and layers more simply
+// above whatever else is open. Still calls straight into batch-runner.js's
+// openBatchConfig (not yet ported) to actually run a group — same as the
+// original.
+import { ArrowLeft, Play, Pencil, Layers, Copy, Clock, Info } from 'lucide-react';
 import type { Snippet, Group } from '@shared/types';
 import { snippetIcon, newId, tagColors, timeAgo } from '../../lib/utils';
 import { InfoHint } from '../shared/InfoHint';
-import { SnippetMultiPickerList, snippetPickerItems } from '../shared/SnippetPicker';
 import { showToast } from '../../lib/toast';
 import { useSnippetsVersion, bumpSnippetsVersion } from '../../store/useSnippetsVersion';
-import { useGroupsStore, closeGroups, openGroupEditor, showGroupsListView } from '../../store/useGroupsStore';
+import { useGroupsStore, closeGroups, openGroupEditor } from '../../store/useGroupsStore';
+import { openGroupDetails } from '../../store/useGroupDetailsStore';
 import { state } from '../../../modules/state';
 import { openBatchConfig } from '../../store/useBatchStore';
+import { useScreenOpenAnimation } from '../../lib/screenAnimation';
 
 async function persistGroups() {
   state.groups = await window.electronAPI.saveGroups(state.groups as Group[]);
@@ -42,7 +44,10 @@ function runGroup(group: Group) {
     g.lastRunAt = new Date().toISOString();
     void persistGroups();
   }
-  closeGroups();
+  // Deliberately does NOT close Groups first — `.modal-overlay` (the batch
+  // config/results modal) renders above `.screen` (see style.css), so it
+  // layers correctly on top and closing it lands you right back on Groups,
+  // exactly where you started, instead of the main snippet list.
   openBatchConfig(list);
 }
 
@@ -75,7 +80,14 @@ function GroupCard({ group }: { group: Group }) {
           <Layers size={16} />
         </div>
         <div className="group-card-title-group">
-          <div className="group-card-name">{group.name || '(untitled group)'}</div>
+          <div className="group-card-name">
+            {group.name || '(untitled group)'}
+            {group.schedule?.enabled && (
+              <span className="schedule-badge" title="Runs automatically on a schedule">
+                <Clock size={11} />
+              </span>
+            )}
+          </div>
           <div className="group-card-meta">
             {validCount} snippet{validCount === 1 ? '' : 's'}
             {validCount < group.snippetIds.length ? ' · some deleted' : ''}
@@ -88,7 +100,8 @@ function GroupCard({ group }: { group: Group }) {
         <div className="group-card-members">
           {members.slice(0, MAX_MEMBER_CHIPS).map((s) => (
             <span key={s.id} className="group-card-member-chip" title={s.name}>
-              {snippetIcon(s)} {s.name}
+              <span className="group-card-member-chip-icon">{snippetIcon(s)}</span>
+              <span className="group-card-member-chip-name">{s.name}</span>
             </span>
           ))}
           {members.length > MAX_MEMBER_CHIPS && (
@@ -108,15 +121,24 @@ function GroupCard({ group }: { group: Group }) {
         <button type="button" className="btn btn-small btn-ghost" title="Duplicate group" onClick={() => duplicateGroup(group)}>
           <Copy size={13} />
         </button>
+        <button type="button" className="btn btn-small btn-ghost" title="Details (ID, schedule, member snippet IDs)" onClick={() => openGroupDetails(group)}>
+          <Info size={13} />
+        </button>
       </div>
     </div>
   );
 }
 
-function GroupsListView() {
+export function GroupsModal() {
+  useSnippetsVersion();
+  const { open } = useGroupsStore();
+  const skipAnim = useScreenOpenAnimation(open);
+  if (!open) return null;
+
   const groups = state.groups as Group[];
+
   return (
-    <>
+    <div className={'screen' + (skipAnim ? ' screen-no-anim' : '')}>
       <div className="screen-header">
         <button type="button" className="icon-btn" title="Back" onClick={closeGroups}>
           <ArrowLeft size={16} />
@@ -141,100 +163,6 @@ function GroupsListView() {
           </div>
         )}
       </div>
-    </>
+    </div>
   );
-}
-
-function GroupEditorView({ editingId }: { editingId: string | null }) {
-  const groups = state.groups as Group[];
-  const editingGroup = editingId ? groups.find((g) => g.id === editingId) : null;
-  const [name, setName] = useState(editingGroup?.name || '');
-  const [description, setDescription] = useState(editingGroup?.description || '');
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set(editingGroup ? editingGroup.snippetIds : []));
-
-  const snippets = state.snippets as Snippet[];
-
-  function toggleSnippet(id: string) {
-    const next = new Set(selectedIds);
-    if (next.has(id)) next.delete(id);
-    else next.add(id);
-    setSelectedIds(next);
-  }
-
-  async function save() {
-    const finalName = name.trim() || 'Untitled group';
-    const finalDescription = description.trim();
-    const snippetIds = Array.from(selectedIds);
-    if (snippetIds.length === 0) {
-      showToast('Pick at least one snippet for this group', 'error');
-      return;
-    }
-    const id = editingId || newId('grp');
-    const group: Group = { id, name: finalName, description: finalDescription, snippetIds, runCount: editingGroup?.runCount ?? 0, lastRunAt: editingGroup?.lastRunAt ?? null };
-    const existingIdx = groups.findIndex((g) => g.id === id);
-    if (existingIdx >= 0) groups[existingIdx] = group;
-    else groups.push(group);
-    state.groups = await window.electronAPI.saveGroups(groups);
-    bumpSnippetsVersion();
-    showToast(`Saved group "${finalName}"`);
-    showGroupsListView();
-  }
-
-  async function remove() {
-    const idx = groups.findIndex((g) => g.id === editingId);
-    if (idx < 0) return;
-    const [removed] = groups.splice(idx, 1);
-    state.groups = await window.electronAPI.saveGroups(groups);
-    bumpSnippetsVersion();
-    showToast(`Deleted group "${removed.name || '(untitled group)'}"`);
-    showGroupsListView();
-  }
-
-  return (
-    <>
-      <div className="screen-header">
-        <button type="button" className="icon-btn" title="Back to groups" onClick={showGroupsListView}>
-          <ArrowLeft size={16} />
-        </button>
-        <div className="screen-header-title">
-          <h2>{editingGroup ? 'Edit group' : 'New group'}</h2>
-        </div>
-      </div>
-      <div className="screen-body no-scrollbar">
-        <label className="field-label" htmlFor="groupNameInput">Name</label>
-        <input type="text" id="groupNameInput" className="field-input" placeholder="e.g. Morning setup" autoComplete="off" value={name} onChange={(e) => setName(e.target.value)} autoFocus />
-
-        <label className="field-label" htmlFor="groupDescriptionInput" title="Optional">
-          Description
-        </label>
-        <textarea id="groupDescriptionInput" className="field-textarea" rows={2} placeholder="What this group is for, when to run it…" value={description} onChange={(e) => setDescription(e.target.value)} />
-
-        <label className="field-label">
-          Snippets in this group
-          <span className="field-label-count">{selectedIds.size} selected</span>
-        </label>
-        <SnippetMultiPickerList items={snippetPickerItems(snippets)} selectedIds={selectedIds} onToggle={toggleSnippet} />
-      </div>
-      <div className="screen-footer screen-footer-left">
-        {editingGroup ? (
-          <button type="button" className="btn btn-ghost btn-danger" onClick={remove}>
-            Delete group
-          </button>
-        ) : (
-          <span />
-        )}
-        <button type="button" className="btn btn-primary" onClick={save}>
-          Save group
-        </button>
-      </div>
-    </>
-  );
-}
-
-export function GroupsModal() {
-  useSnippetsVersion();
-  const { open, view, editingId } = useGroupsStore();
-  if (!open) return null;
-
-  return <div className="screen">{view === 'list' ? <GroupsListView /> : <GroupEditorView editingId={editingId} />}</div>;
 }

@@ -13,7 +13,7 @@
 // component — the same "imperative DOM escape hatch for fast-changing live
 // status" this app already uses for background-process output
 // (processEngine.ts) and a card's own run output (runEngine.ts).
-import type { PipelineNode, PipelineEdge, Snippet, RunResult } from '@shared/types';
+import type { PipelineNode, PipelineEdge, Snippet, Group, RunResult } from '@shared/types';
 import { walkPipeline, withRetries, sleep, type NodeOutcome } from '@shared/pipelineWalk';
 import { extractPlaceholders, runnableTextOf, substituteAll } from './utils';
 import { showToast } from './toast';
@@ -132,6 +132,68 @@ export async function runPipelineGraph(nodes: PipelineNode[], edges: PipelineEdg
       const result: RunResult = { code: subStats && subStats.success ? 0 : 1, stdout: '', stderr: '' };
       setRowDone(rowId, result);
       return { kind: 'ran', result };
+    }
+
+    if (node.kind === 'group') {
+      const group = (state.groups as Group[]).find((g) => g.id === node.groupId);
+      if (!group) {
+        const rowId = addLabelRow(node.label || '⚠ Group not found');
+        setRowSkipped(rowId);
+        return { kind: 'skipped' };
+      }
+      const members = group.snippetIds.map((id) => snippets.find((s) => s.id === id)).filter((s): s is Snippet => Boolean(s));
+      if (members.length === 0) {
+        const rowId = addLabelRow(`⚠ "${group.name || '(untitled group)'}" — no snippets left to run`);
+        setRowSkipped(rowId);
+        return { kind: 'skipped' };
+      }
+      // Each member gets its own row (unlike 'pipeline', which collapses to
+      // one label row since a sub-pipeline's own nodes already get their
+      // own rows recursively) — a Group is a flat list, not a graph, so
+      // there's nothing more granular for a member to recurse into. Run
+      // sequentially, same as every other "run a group unattended" path in
+      // this app (triggerServer.ts's /run-group, main/groupRunner.ts) —
+      // consistent behavior across all three, rather than a fourth variant
+      // that happens to run in parallel just because it's interactive here.
+      const labelRowId = addLabelRow(`▸ ${group.name || '(untitled group)'}`);
+      setRowRunning(labelRowId);
+      let anyRan = false;
+      let allOk = true;
+      for (const member of members) {
+        const rowId = addRow(member);
+        const placeholderNames = extractPlaceholders(runnableTextOf(member));
+        const hasAllValues = placeholderNames.every((n) => opts.values && n in opts.values);
+        if (placeholderNames.length > 0 && !hasAllValues) {
+          setRowSkipped(rowId);
+          continue;
+        }
+        const runnable: Snippet = placeholderNames.length > 0
+          ? { ...member, command: substituteAll(member.command, opts.values), steps: member.steps ? member.steps.map((s) => substituteAll(s, opts.values)) : null }
+          : member;
+        setRowRunning(rowId);
+        // eslint-disable-next-line no-await-in-loop
+        const result = await runOne(runnable);
+        setRowDone(rowId, result);
+        anyRan = true;
+        if (result.code !== 0) allOk = false;
+        const target = snippets.find((s) => s.id === member.id);
+        if (target) {
+          target.runCount = (target.runCount || 0) + 1;
+          target.lastRunAt = new Date().toISOString();
+        }
+      }
+      // Success iff every member that actually ran (not itself skipped for
+      // a missing placeholder) succeeded — same "success iff everything
+      // that ran inside succeeded" rule 'pipeline' nodes use for their own
+      // sub-run. A group node where every member was skipped never ran
+      // anything real, so it's reported as skipped too, not a vacuous success.
+      if (!anyRan) {
+        setRowSkipped(labelRowId);
+        return { kind: 'skipped' };
+      }
+      const groupResult: RunResult = { code: allOk ? 0 : 1, stdout: '', stderr: '' };
+      setRowDone(labelRowId, groupResult);
+      return { kind: 'ran', result: groupResult };
     }
 
     // 'step'

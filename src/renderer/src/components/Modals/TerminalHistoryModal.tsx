@@ -14,6 +14,7 @@ import { persistSnippets } from '../../lib/snippetsStore';
 import { openModal } from '../../store/useEditorStore';
 import { state } from '../../../modules/state';
 import { InfoHint } from '../shared/InfoHint';
+import { useScreenOpenAnimation } from '../../lib/screenAnimation';
 
 interface Line {
   key: string;
@@ -76,6 +77,7 @@ export function TerminalHistoryModal() {
     return lines;
   }, [sources]);
 
+  const skipAnim = useScreenOpenAnimation(open);
   if (!open) return null;
 
   const q = query.trim().toLowerCase();
@@ -110,7 +112,7 @@ export function TerminalHistoryModal() {
   }
 
   return (
-    <div className="screen">
+    <div className={'screen' + (skipAnim ? ' screen-no-anim' : '')}>
       <div className="screen-header">
         <button type="button" className="icon-btn" title="Back" onClick={closeTerminalHistory}>
           <ArrowLeft size={16} />

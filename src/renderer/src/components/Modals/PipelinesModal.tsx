@@ -18,23 +18,25 @@
 // PipelineCanvas as plain, controlled data; only PipelineCanvas.tsx and
 // pipelineFlow.ts need to know React Flow's own Node/Edge shape exists.
 import { useEffect, useState } from 'react';
-import { ArrowLeft, Play, Pencil, Wand2, Copy, Share2, Clock, ShieldQuestion, Waypoints, PlusCircle, SlidersHorizontal } from 'lucide-react';
+import { ArrowLeft, Play, Pencil, Wand2, Copy, Share2, Clock, ShieldQuestion, Waypoints, PlusCircle, SlidersHorizontal, Layers } from 'lucide-react';
 import { InfoHint } from '../shared/InfoHint';
-import type { Pipeline, PipelineNode, PipelineEdge, EdgeCondition, JoinMode, NodeKind, ScheduleType, Snippet } from '@shared/types';
+import type { Pipeline, PipelineNode, PipelineEdge, EdgeCondition, JoinMode, NodeKind, ScheduleType, Snippet, Group } from '@shared/types';
 import { VALID_SCHEDULE_TYPES } from '@shared/types';
-import { snippetIcon, newId, SHELL_LABELS, pipelineConditionLabel, pipelineNodeDisplayName, pipelineReferenceCreatesCycle, collectPipelinePlaceholders, tryCreatePipelineEdge } from '../../lib/utils';
+import { snippetIcon, newId, SHELL_LABELS, pipelineConditionLabel, pipelineNodeDisplayName, pipelineReferenceCreatesCycle, collectPipelinePlaceholders, collectPipelinePlaceholdersUsedBy, tryCreatePipelineEdge } from '../../lib/utils';
 import { ParamForm } from '../Card/ParamForm';
 import { showToast } from '../../lib/toast';
 import { ThemedSelect } from '../shared/ThemedSelect';
 import { SnippetPickerMenu, snippetPickerItems, type PickerItem, type SnippetPickerState } from '../shared/SnippetPicker';
 import { PipelineCanvas, type Selection } from './pipeline/PipelineCanvas';
 import { layoutPipelineNodes } from '../../lib/pipelineLayout';
-import { usePipelinesStore, openPipelineEditor, showPipelinesListView, closePipelines, closePipelinesForRun, consumePendingReopen, savePipelinesList } from '../../store/usePipelinesStore';
+import { usePipelinesStore, openPipelineEditor, closePipelines, closePipelinesForRun, consumePendingReopen, backFromPipelineEditor, savePipelinesList } from '../../store/usePipelinesStore';
 import { onBatchModalClosed } from '../../lib/events';
 import { openModal } from '../../store/useEditorStore';
 import { state } from '../../../modules/state';
 import { persistSnippets } from '../../lib/snippetsStore';
 import { runPipelineGraph } from '../../lib/pipelineEngine';
+import { useScreenOpenAnimation } from '../../lib/screenAnimation';
+import { openGroupEditor } from '../../store/useGroupsStore';
 
 const JOIN_MODE_OPTIONS: [JoinMode, string][] = [
   ['any', 'Any incoming link (OR)'],
@@ -43,7 +45,7 @@ const JOIN_MODE_OPTIONS: [JoinMode, string][] = [
 
 function blankNode(kind: NodeKind, x: number, y: number): PipelineNode {
   return {
-    id: newId('node'), kind, snippetId: '', subPipelineId: '', delaySeconds: 5, label: '',
+    id: newId('node'), kind, snippetId: '', subPipelineId: '', groupId: '', delaySeconds: 5, label: '',
     retries: 0, retryDelaySeconds: 5, joinMode: 'any', x, y,
   };
 }
@@ -82,7 +84,14 @@ const CONDITION_OPTIONS: [EdgeCondition, string][] = [
  * closing first, same as GroupsModal.tsx's own runGroup().
  */
 function usePipelineParamGate() {
-  const [gate, setGate] = useState<{ nodes: PipelineNode[]; edges: PipelineEdge[]; maxConcurrency: number; names: string[]; closeScreenFirst: boolean } | null>(null);
+  const [gate, setGate] = useState<{
+    nodes: PipelineNode[];
+    edges: PipelineEdge[];
+    maxConcurrency: number;
+    names: string[];
+    usedBy: Record<string, string[]>;
+    closeScreenFirst: boolean;
+  } | null>(null);
 
   async function runWithGate(pipeline: Pick<Pipeline, 'nodes' | 'edges' | 'maxConcurrency'>, closeScreenFirst = true) {
     const names = collectPipelinePlaceholders(pipeline.nodes, state.snippets as Snippet[]);
@@ -92,16 +101,18 @@ function usePipelineParamGate() {
       await persistSnippets({ silent: true });
       return;
     }
-    setGate({ nodes: pipeline.nodes, edges: pipeline.edges, maxConcurrency: pipeline.maxConcurrency, names, closeScreenFirst });
+    const usedBy = collectPipelinePlaceholdersUsedBy(pipeline.nodes, state.snippets as Snippet[]);
+    setGate({ nodes: pipeline.nodes, edges: pipeline.edges, maxConcurrency: pipeline.maxConcurrency, names, usedBy, closeScreenFirst });
   }
 
   const gateModal = gate && (
     <div className="modal-overlay" onClick={(e) => { if (e.target === e.currentTarget) setGate(null); }}>
       <div className="modal">
         <h2>Values for this run</h2>
-        <p className="field-hint">Collected once for every parameterized step in this pipeline.</p>
+        <p className="field-hint">Collected once for every parameterized step in this pipeline — see which step each value is for under its name.</p>
         <ParamForm
           names={gate.names}
+          usedBy={gate.usedBy}
           onCancel={() => setGate(null)}
           onRun={async (values) => {
             const { nodes, edges, maxConcurrency, closeScreenFirst } = gate;
@@ -199,6 +210,7 @@ function Inspector({
 }) {
   if (!selection) return null;
   const snippets = state.snippets as Snippet[];
+  const groups = state.groups as Group[];
 
   function removeNode(nodeId: string) {
     setNodes(nodes.filter((n) => n.id !== nodeId));
@@ -222,7 +234,7 @@ function Inspector({
   function connectFrom(node: PipelineNode) {
     const targets: PickerItem[] = nodes
       .filter((n) => n.id !== node.id)
-      .map((n) => ({ id: n.id, label: <>{pipelineNodeDisplayName(n, snippets, pipelines)}</>, filterText: pipelineNodeDisplayName(n, snippets, pipelines).toLowerCase() }));
+      .map((n) => ({ id: n.id, label: <>{pipelineNodeDisplayName(n, snippets, pipelines, groups)}</>, filterText: pipelineNodeDisplayName(n, snippets, pipelines, groups).toLowerCase() }));
     return (anchor: HTMLElement) =>
       openPicker(anchor, targets, 'No other steps to connect to yet', (targetId) => {
         const result = tryCreatePipelineEdge(edges, node.id, targetId);
@@ -263,7 +275,7 @@ function Inspector({
               const targetNode = nodes.find((n) => n.id === edge.to);
               return (
                 <button type="button" key={edge.id} className="pipeline-inspector-edge-row" onClick={() => setSelection({ type: 'edge', id: edge.id })}>
-                  {pipelineConditionLabel(edge)} → {targetNode ? pipelineNodeDisplayName(targetNode, snippets, pipelines) : '?'}
+                  {pipelineConditionLabel(edge)} → {targetNode ? pipelineNodeDisplayName(targetNode, snippets, pipelines, groups) : '?'}
                 </button>
               );
             })}
@@ -277,7 +289,7 @@ function Inspector({
       return (
         <div className="pipeline-inspector no-scrollbar">
           <div className="pipeline-inspector-title">Step</div>
-          <div className="pipeline-inspector-name">{snippet ? `${snippetIcon(snippet)} ${snippet.name}` : '⚠ (deleted snippet)'}</div>
+          <div className="pipeline-inspector-name" title={snippet?.name}>{snippet ? `${snippetIcon(snippet)} ${snippet.name}` : '⚠ (deleted snippet)'}</div>
           {snippet && (
             <div className="pipeline-inspector-meta">
               {SHELL_LABELS[snippet.shell] || snippet.shell} · {snippet.tag}
@@ -346,26 +358,69 @@ function Inspector({
       );
     }
 
-    // 'pipeline'
-    const target = pipelines.find((p) => p.id === node.subPipelineId);
-    const candidateIds = pipelines.filter((p) => p.id !== editingId && !pipelineReferenceCreatesCycle(pipelines, editingId, [p.id])).map((p) => p.id);
+    if (node.kind === 'pipeline') {
+      const target = pipelines.find((p) => p.id === node.subPipelineId);
+      const candidateIds = pipelines.filter((p) => p.id !== editingId && !pipelineReferenceCreatesCycle(pipelines, editingId, [p.id])).map((p) => p.id);
+      return (
+        <div className="pipeline-inspector no-scrollbar">
+          <div className="pipeline-inspector-title">Sub-pipeline</div>
+          <div className="pipeline-inspector-name">{target ? target.name || '(untitled pipeline)' : '⚠ Not set'}</div>
+          <button
+            type="button"
+            className="btn btn-small"
+            onClick={(e) =>
+              openPicker(
+                e.currentTarget,
+                pipelines.filter((p) => candidateIds.includes(p.id)).map((p) => ({ id: p.id, label: <>{p.name || '(untitled pipeline)'}</>, filterText: (p.name || '').toLowerCase() })),
+                'No other pipelines available (would create a cycle, or none exist yet)',
+                (subPipelineId) => updateNode(node.id, { subPipelineId })
+              )
+            }
+          >
+            Change target…
+          </button>
+          {commonFooter}
+        </div>
+      );
+    }
+
+    // 'group' — unlike a sub-pipeline, a Group can never create a reference
+    // cycle (it only ever points at snippets), so every saved group is
+    // always a valid target — no pipelineReferenceCreatesCycle-style filter
+    // needed here.
+    const targetGroup = groups.find((g) => g.id === node.groupId);
     return (
       <div className="pipeline-inspector no-scrollbar">
-        <div className="pipeline-inspector-title">Sub-pipeline</div>
-        <div className="pipeline-inspector-name">{target ? target.name || '(untitled pipeline)' : '⚠ Not set'}</div>
+        <div className="pipeline-inspector-title">Group</div>
+        <div className="pipeline-inspector-name">{targetGroup ? targetGroup.name || '(untitled group)' : '⚠ Not set'}</div>
+        {targetGroup && <div className="pipeline-inspector-meta">{targetGroup.snippetIds.length} snippet(s)</div>}
         <button
           type="button"
           className="btn btn-small"
           onClick={(e) =>
             openPicker(
               e.currentTarget,
-              pipelines.filter((p) => candidateIds.includes(p.id)).map((p) => ({ id: p.id, label: <>{p.name || '(untitled pipeline)'}</>, filterText: (p.name || '').toLowerCase() })),
-              'No other pipelines available (would create a cycle, or none exist yet)',
-              (subPipelineId) => updateNode(node.id, { subPipelineId })
+              groups.map((g) => ({ id: g.id, label: <>{g.name || '(untitled group)'}</>, filterText: (g.name || '').toLowerCase() })),
+              'No groups yet',
+              (groupId) => updateNode(node.id, { groupId })
             )
           }
         >
-          Change target…
+          Change group…
+        </button>
+        {targetGroup && (
+          // The group editor is a `.modal` now (GroupEditorModal.tsx) — it
+          // layers above this Pipelines screen without closing it first, so
+          // the working-copy graph here is never at risk of being discarded
+          // just to edit the group a node points at.
+          <button type="button" className="btn btn-small" onClick={() => openGroupEditor(targetGroup)}>
+            <Pencil size={12} />
+            <span>Edit group…</span>
+          </button>
+        )}
+        <button type="button" className="btn btn-small" onClick={() => duplicateNode(node)}>
+          <Copy size={12} />
+          <span>Duplicate step</span>
         </button>
         {commonFooter}
       </div>
@@ -386,7 +441,7 @@ function Inspector({
     <div className="pipeline-inspector no-scrollbar">
       <div className="pipeline-inspector-title">Connection</div>
       <div className="pipeline-inspector-meta">
-        {fromNode ? pipelineNodeDisplayName(fromNode, snippets, pipelines) : '?'} → {toNode ? pipelineNodeDisplayName(toNode, snippets, pipelines) : '?'}
+        {fromNode ? pipelineNodeDisplayName(fromNode, snippets, pipelines, groups) : '?'} → {toNode ? pipelineNodeDisplayName(toNode, snippets, pipelines, groups) : '?'}
       </div>
       <label className="field-label">Run the next step when this one…</label>
       <ThemedSelect
@@ -479,6 +534,10 @@ function EditorView({ editingId }: { editingId: string | null }) {
     const pos = nextNodePosition();
     placeAndSelect({ ...blankNode('pipeline', pos.x, pos.y), subPipelineId });
   }
+  function addGroupNode(groupId: string) {
+    const pos = nextNodePosition();
+    placeAndSelect({ ...blankNode('group', pos.x, pos.y), groupId });
+  }
 
   /** Lays every node out left-to-right via `dagre` (pipelineLayout.ts) — a one-click fix for a graph that's turned into a tangle after a lot of free-form dragging — then fits the viewport to the result. */
   function autoArrange() {
@@ -517,7 +576,7 @@ function EditorView({ editingId }: { editingId: string | null }) {
     const nextList = idx >= 0 ? pipelines.map((p, i) => (i === idx ? pipeline : p)) : [...pipelines, pipeline];
     await savePipelinesList(nextList);
     showToast(`Saved pipeline "${finalName}"`);
-    showPipelinesListView();
+    backFromPipelineEditor();
   }
 
   async function remove() {
@@ -526,7 +585,7 @@ function EditorView({ editingId }: { editingId: string | null }) {
     const removed = pipelines[idx];
     await savePipelinesList(pipelines.filter((_, i) => i !== idx));
     showToast(`Deleted pipeline "${removed.name || '(untitled pipeline)'}"`);
-    showPipelinesListView();
+    backFromPipelineEditor();
   }
 
   async function runFromEditor() {
@@ -538,7 +597,7 @@ function EditorView({ editingId }: { editingId: string | null }) {
   return (
     <>
       <div className="screen-header">
-        <button type="button" className="icon-btn" title="Back to pipelines" onClick={showPipelinesListView}>
+        <button type="button" className="icon-btn" title="Back to pipelines" onClick={backFromPipelineEditor}>
           <ArrowLeft size={16} />
         </button>
         <div className="screen-header-title">
@@ -574,6 +633,18 @@ function EditorView({ editingId }: { editingId: string | null }) {
             <Waypoints size={12} />
             <span>Sub-pipeline</span>
           </button>
+          <button
+            type="button"
+            className="btn btn-small"
+            title="Run every snippet in a saved Group inline"
+            onClick={(e) => {
+              const items: PickerItem[] = (state.groups as Group[]).map((g) => ({ id: g.id, label: <>{g.name || '(untitled group)'}</>, filterText: (g.name || '').toLowerCase() }));
+              setPicker({ anchor: e.currentTarget.getBoundingClientRect(), items, emptyLabel: 'No groups yet', onPick: addGroupNode });
+            }}
+          >
+            <Layers size={12} />
+            <span>Group</span>
+          </button>
         </div>
         <span className="pipeline-toolbar-divider" />
         <div className="pipeline-toolbar-group" title="Layout & configuration">
@@ -590,7 +661,7 @@ function EditorView({ editingId }: { editingId: string | null }) {
         <InfoHint text="Drag a step to move it · drag its right dot onto another to connect · click a step or connection to edit it · Delete removes what's selected" />
       </div>
       {settingsOpen && (
-        <div className="pipeline-settings-panel">
+        <div className="schedule-settings-panel">
           <label className="checkbox-row" htmlFor="pipelineScheduleToggle">
             <input type="checkbox" id="pipelineScheduleToggle" checked={scheduleEnabled} onChange={(e) => setScheduleEnabled(e.target.checked)} />
             <span>Run this whole pipeline on a schedule</span>
@@ -684,7 +755,8 @@ export function PipelinesModal() {
   // is dismissed. A no-op for every other batch/group/tag-run's own results
   // modal closing, via pendingReopen's own guard.
   useEffect(() => onBatchModalClosed(consumePendingReopen), []);
+  const skipAnim = useScreenOpenAnimation(open);
   if (!open) return null;
 
-  return <div className="screen">{view === 'list' ? <ListView /> : <EditorView editingId={editingId} />}</div>;
+  return <div className={'screen' + (skipAnim ? ' screen-no-anim' : '')}>{view === 'list' ? <ListView /> : <EditorView editingId={editingId} />}</div>;
 }

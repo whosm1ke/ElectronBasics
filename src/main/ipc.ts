@@ -287,12 +287,16 @@ export function registerIpcHandlers(): void {
     return saved;
   });
 
-  ipcMain.handle('pick-watch-path', async () => {
+  ipcMain.handle('pick-watch-path', async (_event: IpcMainInvokeEvent, defaultPath?: string) => {
     suppressNextBlurHide();
     const win = getMainWindow();
     const { canceled, filePaths } = await dialog.showOpenDialog(win!, {
       title: 'Choose a file or folder to watch',
       properties: ['openFile', 'openDirectory'],
+      // Re-picking an already-set trigger's path opens Explorer already
+      // pointed at it (its containing folder for a file, or itself for a
+      // directory) instead of always starting from Explorer's own default.
+      defaultPath: defaultPath || undefined,
     });
     if (canceled || !filePaths[0]) return { ok: false };
     return { ok: true, path: filePaths[0] };

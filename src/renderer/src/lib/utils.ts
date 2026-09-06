@@ -4,7 +4,7 @@
 // see CLAUDE.md's migration notes on the strangler-fig approach.
 import { differenceInSeconds, differenceInMinutes, differenceInHours, differenceInDays, differenceInWeeks, differenceInMonths, differenceInYears } from 'date-fns';
 import { newId } from '@shared/id';
-import type { Snippet, ShellType, PipelineEdge, PipelineNode, Pipeline } from '@shared/types';
+import type { Snippet, ShellType, PipelineEdge, PipelineNode, Pipeline, Group } from '@shared/types';
 
 // Re-exported (not reimplemented) — used to be its own near-identical copy
 // here, consolidated into one shared implementation once the zod schemas in
@@ -250,6 +250,34 @@ export function pipelineConditionLabel({ condition, value }: Pick<PipelineEdge, 
   }
 }
 
+/** Every distinct `{{placeholder}}` name across a plain list of snippets — the batch/group equivalent of collectPipelinePlaceholders() below, for BatchModal.tsx's own param-gate (a manually-selected batch, or a Group's "Run"). */
+export function collectPlaceholders(snippets: Snippet[]): string[] {
+  const names = new Set<string>();
+  for (const snippet of snippets) {
+    extractPlaceholders(runnableTextOf(snippet)).forEach((name) => names.add(name));
+  }
+  return Array.from(names);
+}
+
+/**
+ * Same scan as collectPlaceholders(), but keyed the other way round: which
+ * snippet name(s) actually need a given `{{placeholder}}` — passed to
+ * ParamForm.tsx's own `usedBy` prop so a batch/group's shared "collect
+ * every value once" gate can say *for* which snippet a field is, instead of
+ * a flat list of names with no indication which snippet each one belongs
+ * to (the exact confusion this was added to fix).
+ */
+export function collectPlaceholdersUsedBy(snippets: Snippet[]): Record<string, string[]> {
+  const usedBy: Record<string, string[]> = {};
+  for (const snippet of snippets) {
+    const label = snippet.name || '(untitled)';
+    for (const name of extractPlaceholders(runnableTextOf(snippet))) {
+      (usedBy[name] ??= []).push(label);
+    }
+  }
+  return usedBy;
+}
+
 /**
  * Every distinct `{{placeholder}}` name across every 'step' node's snippet
  * in this pipeline, collected once so the whole run can be prompted up
@@ -272,10 +300,26 @@ export function collectPipelinePlaceholders(nodes: PipelineNode[], snippets: Sni
   return Array.from(names);
 }
 
-/** A pipeline node's display name regardless of kind — the Inspector's "Connects to" list and canvas node components each need this same lookup (a step's snippet name, a sub-pipeline's own name, or a short generic caption for delay/gate). */
-export function pipelineNodeDisplayName(node: Pick<PipelineNode, 'kind' | 'snippetId' | 'subPipelineId' | 'label' | 'delaySeconds'>, snippets: Snippet[], pipelines: Pipeline[]): string {
+/** Same idea as collectPlaceholdersUsedBy() above, for a pipeline's own step nodes — which step(s) (by their snippet's name) a given {{placeholder}} actually belongs to, for the pipeline's own param-gate modal. */
+export function collectPipelinePlaceholdersUsedBy(nodes: PipelineNode[], snippets: Snippet[]): Record<string, string[]> {
+  const usedBy: Record<string, string[]> = {};
+  for (const n of nodes) {
+    if (n.kind !== 'step') continue;
+    const snippet = snippets.find((s) => s.id === n.snippetId);
+    if (!snippet) continue;
+    const label = snippet.name || '(untitled)';
+    for (const name of extractPlaceholders(runnableTextOf(snippet))) {
+      (usedBy[name] ??= []).push(label);
+    }
+  }
+  return usedBy;
+}
+
+/** A pipeline node's display name regardless of kind — the Inspector's "Connects to" list and canvas node components each need this same lookup (a step's snippet name, a sub-pipeline's or group's own name, or a short generic caption for delay/gate). */
+export function pipelineNodeDisplayName(node: Pick<PipelineNode, 'kind' | 'snippetId' | 'subPipelineId' | 'groupId' | 'label' | 'delaySeconds'>, snippets: Snippet[], pipelines: Pipeline[], groups: Group[]): string {
   if (node.kind === 'step') return snippets.find((s) => s.id === node.snippetId)?.name || '⚠ (deleted snippet)';
   if (node.kind === 'pipeline') return pipelines.find((p) => p.id === node.subPipelineId)?.name || node.label || '⚠ (pipeline not found)';
+  if (node.kind === 'group') return groups.find((g) => g.id === node.groupId)?.name || node.label || '⚠ (group not found)';
   if (node.kind === 'delay') return node.label || `Wait ${node.delaySeconds}s`;
   return node.label || 'Approval gate';
 }

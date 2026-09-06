@@ -95,7 +95,7 @@ const electronAPI = {
   saveWatchTriggers: (triggers) => ipcRenderer.invoke('save-watch-triggers', triggers),
 
   /** Opens a native file/folder picker for a watch trigger's path. */
-  pickWatchPath: () => ipcRenderer.invoke('pick-watch-path'),
+  pickWatchPath: (defaultPath) => ipcRenderer.invoke('pick-watch-path', defaultPath),
 
   /** Opens a filesystem path in the OS file explorer. */
   openPath: (targetPath) => ipcRenderer.invoke('open-path', targetPath),

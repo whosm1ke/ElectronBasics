@@ -6,7 +6,7 @@
 // modules/details-modal.js. Still calls straight into
 // editor-modal.js/groups-modal.js (not yet ported) for the dependency/group
 // links — same as Card.tsx does for its own not-yet-ported neighbors.
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useState } from 'react';
 import { Layers, Waypoints } from 'lucide-react';
 import type { Snippet, Group, Pipeline } from '@shared/types';
 import { snippetIcon, SHELL_LABELS, timeAgo } from '../../lib/utils';
@@ -14,16 +14,9 @@ import { useDetailsStore, closeDetails, hideDetailsForNavigation } from '../../s
 import { state } from '../../../modules/state';
 import { openModal } from '../../store/useEditorStore';
 import { groupsForSnippet, openGroupEditor } from '../../store/useGroupsStore';
-import { openPipelineEditorById } from '../../store/usePipelinesStore';
-
-function Row({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div className="details-row">
-      <div className="details-row-label">{label}</div>
-      <div className="details-row-value">{children}</div>
-    </div>
-  );
-}
+import { openPipelineEditorByIdFrom } from '../../store/usePipelinesStore';
+import { closeAllScreens } from '../../lib/screens';
+import { DetailsRow as Row } from '../shared/DetailsRow';
 
 function SnippetLink({ target, originId }: { target: Snippet; originId: string }) {
   return (
@@ -40,14 +33,20 @@ function SnippetLink({ target, originId }: { target: Snippet; originId: string }
   );
 }
 
-function GroupLink({ group }: { group: Group }) {
+function GroupLink({ group, originId }: { group: Group; originId: string }) {
   return (
     <button
       type="button"
       className="details-link-btn"
       title={group.description || undefined}
       onClick={() => {
-        hideDetailsForNavigation(null); // no return-to-details tracking needed here
+        // The group editor is a `.modal` (GroupEditorModal.tsx), same as
+        // this Details panel itself — hiding Details rather than leaving it
+        // open avoids the same z-index-tie ambiguity two `.screen`s used to
+        // have (see useGroupsStore.ts's own header comment); the editor
+        // firing the shared onEditorClosed bus event on close is what
+        // reopens Details again once it's dismissed.
+        hideDetailsForNavigation(originId);
         openGroupEditor(group);
       }}
     >
@@ -56,15 +55,16 @@ function GroupLink({ group }: { group: Group }) {
   );
 }
 
-function PipelineLink({ pipeline }: { pipeline: Pipeline }) {
+function PipelineLink({ pipeline, originId }: { pipeline: Pipeline; originId: string }) {
   return (
     <button
       type="button"
       className="details-link-btn"
       title={pipeline.description || undefined}
       onClick={() => {
-        hideDetailsForNavigation(null);
-        openPipelineEditorById(pipeline.id);
+        hideDetailsForNavigation(originId);
+        closeAllScreens(); // see GroupLink's own comment just above
+        void openPipelineEditorByIdFrom(pipeline.id, { screen: 'details', snippetId: originId });
       }}
     >
       <Waypoints size={12} /> {pipeline.name || '(untitled pipeline)'}
@@ -164,7 +164,7 @@ export function DetailsModal() {
               <div className="details-section-heading">Groups</div>
               <Row label="In groups">
                 {memberGroups.map((g) => (
-                  <GroupLink key={g.id} group={g} />
+                  <GroupLink key={g.id} group={g} originId={snippet.id} />
                 ))}
               </Row>
             </>
@@ -175,7 +175,7 @@ export function DetailsModal() {
               <div className="details-section-heading">Pipelines</div>
               <Row label="Used in">
                 {memberPipelines.map((p) => (
-                  <PipelineLink key={p.id} pipeline={p} />
+                  <PipelineLink key={p.id} pipeline={p} originId={snippet.id} />
                 ))}
               </Row>
             </>

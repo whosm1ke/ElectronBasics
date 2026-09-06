@@ -41,9 +41,12 @@ import { PipelineStepNode } from './PipelineStepNode';
 import { PipelineDelayNode } from './PipelineDelayNode';
 import { PipelineGateNode } from './PipelineGateNode';
 import { PipelineSubPipelineNode } from './PipelineSubPipelineNode';
+import { PipelineGroupNode } from './PipelineGroupNode';
 import { PipelineConditionEdge } from './PipelineConditionEdge';
 
-const nodeTypes = { step: PipelineStepNode, delay: PipelineDelayNode, gate: PipelineGateNode, pipeline: PipelineSubPipelineNode };
+// 'groupRun', not 'group' — see pipelineFlow.ts's GroupFlowNode comment on
+// why the plain name collides with React Flow's own reserved node type.
+const nodeTypes = { step: PipelineStepNode, delay: PipelineDelayNode, gate: PipelineGateNode, pipeline: PipelineSubPipelineNode, groupRun: PipelineGroupNode };
 const edgeTypes = { condition: PipelineConditionEdge };
 // Hoisted to module scope, not created inline on <ReactFlow>'s props: a
 // fresh object/array literal every render makes React Flow's own internal
