@@ -3,13 +3,30 @@
 // saving. Ported from modules/editor-modal.js — intentionally the biggest
 // single component in the renderer, same reasoning the original gave: one
 // cohesive form, splitting it further would just scatter one concern
-// across files. Field state is local (useState), reset from the target
-// snippet each time the modal opens (see the useEffect below) — this is
-// the React-idiomatic replacement for the original's "populate every dom.*
-// field on open" imperative reset.
-import { useEffect, useState } from 'react';
+// across files.
+//
+// Built on react-hook-form + zodResolver rather than the original
+// useState<FormState> + a set(key, value) helper that spread the whole
+// object on every keystroke — RHF's fields are uncontrolled by default
+// (register() wires a plain DOM ref, no per-keystroke re-render of the
+// whole form), and FormSchema below gives the three fields that used to
+// return-early-and-focus on failure (name, command-or-steps) a real
+// per-field error shown inline instead of nothing (there was no message at
+// all before, just a silent focus() — see the old save()). Everything else
+// this form does (env/expect/schedule construction, the run-after/run-before
+// text-to-id resolution, the runBefore/runAfterThis cycle check) stays
+// exactly as it was, just reading from RHF's validated `data` instead of
+// local `form` state — those depend on the *other* snippets in the library
+// at save time, which isn't something a static per-field schema can check,
+// and turning them into zod rules would be new scope beyond porting the
+// form's own state management.
+import { useEffect } from 'react';
+import { useForm, useFieldArray, Controller, type SubmitHandler } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
 import { Trash2 } from 'lucide-react';
 import type { ShellType, ScheduleType, Snippet, EnvVar } from '@shared/types';
+import { VALID_SHELLS, VALID_SCHEDULE_TYPES } from '@shared/types';
 import { newId, findDependencyCycle } from '../../lib/utils';
 import { showToast } from '../../lib/toast';
 import { ThemedSelect } from '../shared/ThemedSelect';
@@ -26,33 +43,56 @@ const SHELL_OPTIONS: { value: ShellType; label: string }[] = [
   { value: 'python', label: 'Python' },
 ];
 
-interface FormState {
-  icon: string;
-  name: string;
-  tag: string;
-  cwd: string;
-  shell: ShellType;
-  elevated: boolean;
-  notes: string;
-  multiStep: boolean;
-  steps: string[];
-  stopOnStepError: boolean;
-  command: string;
-  background: boolean;
-  autoRestart: boolean;
-  stdinEnabled: boolean;
-  stdin: string;
-  env: EnvVar[];
-  expectExitCode: string;
-  expectOutput: string;
-  runAfterInput: string;
-  runBeforeInput: string;
-  scheduleEnabled: boolean;
-  scheduleType: ScheduleType;
-  intervalMinutes: string;
-  dailyTime: string;
-  cronExpr: string;
-}
+// The form's own working shape — deliberately not the same as the persisted
+// Snippet shape (numeric/JSON fields stay strings here, e.g. `expectExitCode`,
+// `intervalMinutes`; `steps`/`env` are useFieldArray-shaped row objects
+// rather than a plain string[]) — mapped onto real Snippet fields in
+// onValid() below, the same way the original save() mapped its own
+// FormState. `steps` rows wrap a bare string in `{ value }` only because
+// useFieldArray requires array items to be objects (a plain string[] can't
+// carry the stable per-row `id` key it needs).
+const FormSchema = z
+  .object({
+    icon: z.string(),
+    name: z.string(),
+    tag: z.string(),
+    cwd: z.string(),
+    shell: z.enum(VALID_SHELLS),
+    elevated: z.boolean(),
+    notes: z.string(),
+    multiStep: z.boolean(),
+    steps: z.array(z.object({ value: z.string() })),
+    stopOnStepError: z.boolean(),
+    command: z.string(),
+    background: z.boolean(),
+    autoRestart: z.boolean(),
+    stdinEnabled: z.boolean(),
+    stdin: z.string(),
+    env: z.array(z.object({ key: z.string(), value: z.string() })),
+    expectExitCode: z.string(),
+    expectOutput: z.string(),
+    runAfterInput: z.string(),
+    runBeforeInput: z.string(),
+    scheduleEnabled: z.boolean(),
+    scheduleType: z.enum(VALID_SCHEDULE_TYPES),
+    intervalMinutes: z.string(),
+    dailyTime: z.string(),
+    cronExpr: z.string(),
+  })
+  .superRefine((data, ctx) => {
+    if (!data.name.trim()) {
+      ctx.addIssue({ code: 'custom', path: ['name'], message: 'Name is required' });
+    }
+    if (data.multiStep) {
+      if (!data.steps.some((s) => s.value.trim())) {
+        ctx.addIssue({ code: 'custom', path: ['steps'], message: 'Add at least one step' });
+      }
+    } else if (!data.command.trim()) {
+      ctx.addIssue({ code: 'custom', path: ['command'], message: 'Command is required' });
+    }
+  });
+
+type FormValues = z.infer<typeof FormSchema>;
 
 /** Two snippets can share a name (nothing enforces uniqueness) — disambiguated with its tag when that happens, same as the original. */
 function displayTextFor(snippet: Snippet, candidates: Snippet[]): string {
@@ -60,10 +100,10 @@ function displayTextFor(snippet: Snippet, candidates: Snippet[]): string {
   return isAmbiguous ? `${snippet.name} (${snippet.tag})` : snippet.name;
 }
 
-function emptyForm(): FormState {
+function emptyForm(): FormValues {
   return {
     icon: '', name: '', tag: '', cwd: '', shell: 'powershell', elevated: false, notes: '',
-    multiStep: false, steps: ['', ''], stopOnStepError: false, command: '',
+    multiStep: false, steps: [{ value: '' }, { value: '' }], stopOnStepError: false, command: '',
     background: false, autoRestart: false,
     stdinEnabled: false, stdin: '',
     env: [],
@@ -73,7 +113,7 @@ function emptyForm(): FormState {
   };
 }
 
-function formFromSnippet(snippet: Snippet, candidates: Snippet[]): FormState {
+function formFromSnippet(snippet: Snippet, candidates: Snippet[]): FormValues {
   const hasSteps = Boolean(snippet.steps && snippet.steps.length);
   const afterTarget = snippet.runAfterThis ? candidates.find((s) => s.id === snippet.runAfterThis) : null;
   const beforeTarget = snippet.runBefore ? candidates.find((s) => s.id === snippet.runBefore) : null;
@@ -86,7 +126,7 @@ function formFromSnippet(snippet: Snippet, candidates: Snippet[]): FormState {
     elevated: Boolean(snippet.elevated) && snippet.shell === 'powershell',
     notes: snippet.notes || '',
     multiStep: hasSteps,
-    steps: hasSteps ? snippet.steps! : ['', ''],
+    steps: hasSteps ? snippet.steps!.map((value) => ({ value })) : [{ value: '' }, { value: '' }],
     stopOnStepError: Boolean(snippet.stopOnStepError),
     command: hasSteps ? '' : snippet.command,
     background: Boolean(snippet.background) && !hasSteps,
@@ -121,8 +161,17 @@ function resolveSnippetRef(typed: string, nameToId: Map<string, string>, fieldLa
 
 export function EditorModal() {
   const { open, editingId } = useEditorStore();
-  const [form, setForm] = useState<FormState>(emptyForm);
-  const set = <K extends keyof FormState>(key: K, value: FormState[K]) => setForm((f) => ({ ...f, [key]: value }));
+  const {
+    register,
+    control,
+    handleSubmit,
+    watch,
+    setValue,
+    reset,
+    formState: { errors },
+  } = useForm<FormValues>({ resolver: zodResolver(FormSchema), defaultValues: emptyForm() });
+  const stepsArray = useFieldArray({ control, name: 'steps' });
+  const envArray = useFieldArray({ control, name: 'env' });
 
   const snippets = state.snippets as Snippet[];
   const editingSnippet = editingId ? snippets.find((s) => s.id === editingId) : null;
@@ -130,7 +179,7 @@ export function EditorModal() {
 
   useEffect(() => {
     if (!open) return;
-    setForm(editingSnippet ? formFromSnippet(editingSnippet, candidates) : emptyForm());
+    reset(editingSnippet ? formFromSnippet(editingSnippet, candidates) : emptyForm());
     setTimeout(() => document.getElementById('newName')?.focus(), 0);
     // Only reset when the modal transitions open/closed or which snippet is
     // being edited changes — not on every candidates/editingSnippet
@@ -144,47 +193,46 @@ export function EditorModal() {
   const runAfterNameToId = new Map(candidates.map((s) => [displayTextFor(s, candidates), s.id]));
   const runBeforeNameToId = runAfterNameToId; // same candidate set, same display text
 
-  function save() {
-    const name = form.name.trim();
-    const tag = form.tag.trim() || 'misc';
-    const cwd = form.cwd.trim() || null;
-    const shell = form.shell;
-    const elevated = form.elevated && shell === 'powershell';
-    const icon = form.icon.trim() || null;
-    const notes = form.notes.trim() || null;
-    const stdin = form.stdinEnabled ? form.stdin || null : null;
+  const multiStep = watch('multiStep');
+  const shell = watch('shell');
+  const background = watch('background');
+  const stdinEnabled = watch('stdinEnabled');
+  const scheduleEnabled = watch('scheduleEnabled');
+  const scheduleType = watch('scheduleType');
+  // A superRefine issue on the whole `steps` array (path: ['steps'], not
+  // ['steps', i, ...]) lands at errors.steps.root, not errors.steps.message
+  // directly — RHF's FieldErrors shape for a useFieldArray'd field reserves
+  // the plain key for per-row errors and puts whole-array-level ones here.
+  const stepsError = (errors.steps as { root?: { message?: string } } | undefined)?.root?.message;
 
-    if (!name) {
-      document.getElementById('newName')?.focus();
-      return;
-    }
+  const onValid: SubmitHandler<FormValues> = (data) => {
+    const name = data.name.trim();
+    const tag = data.tag.trim() || 'misc';
+    const cwd = data.cwd.trim() || null;
+    const shell = data.shell;
+    const elevated = data.elevated && shell === 'powershell';
+    const icon = data.icon.trim() || null;
+    const notes = data.notes.trim() || null;
+    const stdin = data.stdinEnabled ? data.stdin || null : null;
 
     let command = '';
     let steps: string[] | null = null;
-    if (form.multiStep) {
-      steps = form.steps.map((s) => s.trim()).filter(Boolean);
-      if (steps.length === 0) {
-        document.querySelector<HTMLInputElement>('.step-row-input')?.focus();
-        return;
-      }
+    if (data.multiStep) {
+      steps = data.steps.map((s) => s.value.trim()).filter(Boolean);
       command = steps.join('\n');
     } else {
-      command = form.command.trim();
-      if (!command) {
-        document.getElementById('newCommand')?.focus();
-        return;
-      }
+      command = data.command.trim();
     }
 
-    const env = form.env.map((e) => ({ key: e.key.trim(), value: e.value })).filter((e) => e.key);
+    const env = data.env.map((e) => ({ key: e.key.trim(), value: e.value })).filter((e) => e.key);
 
-    const expectExitVal = form.expectExitCode.trim();
-    const expectOutVal = form.expectOutput.trim();
+    const expectExitVal = data.expectExitCode.trim();
+    const expectOutVal = data.expectOutput.trim();
     const expect = expectExitVal !== '' || expectOutVal ? { exitCode: expectExitVal !== '' ? Number(expectExitVal) : null, outputContains: expectOutVal || null } : null;
 
-    const runAfterThis = resolveSnippetRef(form.runAfterInput, runAfterNameToId, '"Run after this one"');
-    const runBefore = resolveSnippetRef(form.runBeforeInput, runBeforeNameToId, '"Run before this one"');
-    const stopOnStepError = form.stopOnStepError;
+    const runAfterThis = resolveSnippetRef(data.runAfterInput, runAfterNameToId, '"Run after this one"');
+    const runBefore = resolveSnippetRef(data.runBeforeInput, runBeforeNameToId, '"Run before this one"');
+    const stopOnStepError = data.stopOnStepError;
 
     // A brand-new snippet can never be part of a cycle (nothing existing can
     // point at an id that doesn't exist yet) — only check when editing.
@@ -199,21 +247,21 @@ export function EditorModal() {
     }
 
     const existingSchedule = editingId ? snippets.find((s) => s.id === editingId)?.schedule : null;
-    const schedule = form.scheduleEnabled
+    const schedule = data.scheduleEnabled
       ? {
           enabled: true,
-          type: form.scheduleType,
-          intervalMinutes: Number(form.intervalMinutes) || 60,
-          dailyTime: form.dailyTime || '09:00',
-          cronExpr: form.cronExpr.trim() || '*/15 * * * *',
+          type: data.scheduleType,
+          intervalMinutes: Number(data.intervalMinutes) || 60,
+          dailyTime: data.dailyTime || '09:00',
+          cronExpr: data.cronExpr.trim() || '*/15 * * * *',
           lastRunAt: existingSchedule ? existingSchedule.lastRunAt : null,
         }
       : null;
 
-    const background = form.background && !steps;
-    const autoRestart = background && form.autoRestart;
+    const backgroundFlag = data.background && !steps;
+    const autoRestart = backgroundFlag && data.autoRestart;
 
-    const fields = { name, tag, command, steps, cwd, shell, elevated, icon, notes, stdin, env, expect, runAfterThis, runBefore, stopOnStepError, schedule, background, autoRestart };
+    const fields = { name, tag, command, steps, cwd, shell, elevated, icon, notes, stdin, env, expect, runAfterThis, runBefore, stopOnStepError, schedule, background: backgroundFlag, autoRestart };
 
     if (editingId) {
       const target = snippets.find((s) => s.id === editingId);
@@ -223,6 +271,11 @@ export function EditorModal() {
     }
 
     persistSnippets().then(() => closeModal()); // emits 'snippets-changed' — cards/tags/favorites redraw themselves
+  };
+
+  /** Focuses the first invalid field on a failed submit — RHF does this automatically for plain register()'d inputs (name, command), but `steps` errors attach to the array itself, not one row's input, so that case needs a manual focus. */
+  function onInvalid(formErrors: typeof errors) {
+    if (formErrors.steps) document.querySelector<HTMLInputElement>('.step-row-input')?.focus();
   }
 
   return (
@@ -233,23 +286,24 @@ export function EditorModal() {
         <div className="field-row">
           <div className="field-col field-col-narrow">
             <label className="field-label" htmlFor="newIcon">Icon</label>
-            <input type="text" id="newIcon" className="field-input icon-input" placeholder="Auto" maxLength={4} value={form.icon} onChange={(e) => set('icon', e.target.value)} />
+            <input type="text" id="newIcon" className="field-input icon-input" placeholder="Auto" maxLength={4} {...register('icon')} />
           </div>
           <div className="field-col">
             <label className="field-label" htmlFor="newName">Name</label>
-            <input type="text" id="newName" className="field-input" placeholder="e.g. Check listening ports" autoComplete="off" value={form.name} onChange={(e) => set('name', e.target.value)} />
+            <input type="text" id="newName" className={'field-input' + (errors.name ? ' field-invalid' : '')} placeholder="e.g. Check listening ports" autoComplete="off" {...register('name')} />
+            {errors.name && <span className="field-error">{errors.name.message}</span>}
           </div>
         </div>
         <div className="icon-picker">
           {ICON_PRESETS.map((emoji: string) => (
-            <button type="button" key={emoji} className="icon-picker-btn" onClick={() => set('icon', emoji)}>
+            <button type="button" key={emoji} className="icon-picker-btn" onClick={() => setValue('icon', emoji)}>
               {emoji}
             </button>
           ))}
         </div>
 
         <label className="field-label" htmlFor="newTag">Tag / category</label>
-        <input type="text" id="newTag" className="field-input" placeholder="e.g. network" autoComplete="off" list="tagDatalist" value={form.tag} onChange={(e) => set('tag', e.target.value)} />
+        <input type="text" id="newTag" className="field-input" placeholder="e.g. network" autoComplete="off" list="tagDatalist" {...register('tag')} />
         <datalist id="tagDatalist">
           {tags.map((t) => (
             <option value={t} key={t} />
@@ -260,18 +314,20 @@ export function EditorModal() {
           <input
             type="checkbox"
             id="multiStepToggle"
-            checked={form.multiStep}
-            onChange={(e) => {
-              const checked = e.target.checked;
-              setForm((f) => ({ ...f, multiStep: checked, steps: checked && f.steps.length === 0 ? ['', ''] : f.steps, background: checked ? false : f.background }));
-            }}
+            {...register('multiStep', {
+              onChange: (e) => {
+                const checked = e.target.checked;
+                if (checked && stepsArray.fields.length === 0) stepsArray.replace([{ value: '' }, { value: '' }]);
+                if (checked) setValue('background', false);
+              },
+            })}
           />
           <span>
             Multi-step sequence <span className="field-hint">(runs each step in order, shows per-step results)</span>
           </span>
         </label>
 
-        {!form.multiStep ? (
+        {!multiStep ? (
           <div>
             <label className="field-label" htmlFor="newCommand">
               Command
@@ -280,42 +336,35 @@ export function EditorModal() {
                 — use <code>{'{{name}}'}</code> for a value you'll fill in before each run
               </span>
             </label>
-            <textarea id="newCommand" className="field-textarea" rows={4} placeholder="Test-NetConnection {{host}}" value={form.command} onChange={(e) => set('command', e.target.value)} />
+            <textarea id="newCommand" className={'field-textarea' + (errors.command ? ' field-invalid' : '')} rows={4} placeholder="Test-NetConnection {{host}}" {...register('command')} />
+            {errors.command && <span className="field-error">{errors.command.message}</span>}
           </div>
         ) : (
           <div>
             <label className="field-label">Steps</label>
             <div className="steps-list">
-              {form.steps.map((step, i) => (
-                <div className="step-row" key={i}>
+              {stepsArray.fields.map((field, i) => (
+                <div className="step-row" key={field.id}>
                   <span className="step-row-num">{i + 1}.</span>
                   <input
                     type="text"
                     className="step-row-input"
                     placeholder="Get-Process {{name}}"
-                    value={step}
-                    onChange={(e) => {
-                      const steps = [...form.steps];
-                      steps[i] = e.target.value;
-                      set('steps', steps);
-                    }}
+                    {...register(`steps.${i}.value` as const)}
                   />
-                  <button
-                    type="button"
-                    className="step-remove-btn"
-                    title="Remove step"
-                    onClick={() => set('steps', form.steps.filter((_, idx) => idx !== i))}
-                  >
+                  <button type="button" className="step-remove-btn" title="Remove step" onClick={() => stepsArray.remove(i)}>
                     <Trash2 size={13} />
                   </button>
                 </div>
               ))}
             </div>
-            <button type="button" className="btn btn-ghost btn-small" onClick={() => set('steps', [...form.steps, ''])}>
+            {/* A superRefine issue on the whole `steps` array (not one row) lands under .root, not .message directly — RHF's FieldErrors shape for a useFieldArray'd field reserves the plain key for per-row errors. */}
+            {stepsError && <span className="field-error">{stepsError}</span>}
+            <button type="button" className="btn btn-ghost btn-small" onClick={() => stepsArray.append({ value: '' })}>
               + Add step
             </button>
             <label className="checkbox-row" htmlFor="stopOnStepErrorToggle">
-              <input type="checkbox" id="stopOnStepErrorToggle" checked={form.stopOnStepError} onChange={(e) => set('stopOnStepError', e.target.checked)} />
+              <input type="checkbox" id="stopOnStepErrorToggle" {...register('stopOnStepError')} />
               <span>
                 Stop if a step fails <span className="field-hint">(otherwise every step runs regardless)</span>
               </span>
@@ -328,43 +377,51 @@ export function EditorModal() {
             <label className="field-label" htmlFor="newCwd">
               Working directory <span className="field-hint">(optional)</span>
             </label>
-            <input type="text" id="newCwd" className="field-input" placeholder="C:\Projects\my-app" autoComplete="off" value={form.cwd} onChange={(e) => set('cwd', e.target.value)} />
+            <input type="text" id="newCwd" className="field-input" placeholder="C:\Projects\my-app" autoComplete="off" {...register('cwd')} />
           </div>
           <div className="field-col field-col-narrow">
             <label className="field-label" htmlFor="newShell">Shell</label>
-            <ThemedSelect
-              id="newShell"
-              value={form.shell}
-              options={SHELL_OPTIONS}
-              onChange={(shell) => setForm((f) => ({ ...f, shell, elevated: shell === 'powershell' ? f.elevated : false }))}
+            <Controller
+              name="shell"
+              control={control}
+              render={({ field }) => (
+                <ThemedSelect
+                  id="newShell"
+                  value={field.value}
+                  options={SHELL_OPTIONS}
+                  onChange={(value) => {
+                    field.onChange(value);
+                    if (value !== 'powershell') setValue('elevated', false);
+                  }}
+                />
+              )}
             />
           </div>
         </div>
 
-        <label className={'checkbox-row' + (form.shell !== 'powershell' ? ' disabled' : '')} htmlFor="newElevated" id="elevatedRow">
-          <input type="checkbox" id="newElevated" checked={form.elevated} disabled={form.shell !== 'powershell'} onChange={(e) => set('elevated', e.target.checked)} />
+        <label className={'checkbox-row' + (shell !== 'powershell' ? ' disabled' : '')} htmlFor="newElevated" id="elevatedRow">
+          <input type="checkbox" id="newElevated" disabled={shell !== 'powershell'} {...register('elevated')} />
           <span>
             Run as Administrator <span className="field-hint">(PowerShell only — triggers a UAC prompt)</span>
           </span>
         </label>
 
-        {!form.multiStep && (
+        {!multiStep && (
           <div>
             <label className="checkbox-row" htmlFor="backgroundToggle">
               <input
                 type="checkbox"
                 id="backgroundToggle"
-                checked={form.background}
-                onChange={(e) => setForm((f) => ({ ...f, background: e.target.checked, autoRestart: e.target.checked ? f.autoRestart : false }))}
+                {...register('background', { onChange: (e) => { if (!e.target.checked) setValue('autoRestart', false); } })}
               />
               <span>
                 Run as a background process{' '}
                 <span className="field-hint">(Start/Stop a long-running process — dev server, docker compose up, tail -f — instead of run-once)</span>
               </span>
             </label>
-            {form.background && (
+            {background && (
               <label className="checkbox-row" htmlFor="autoRestartToggle" id="autoRestartRow">
-                <input type="checkbox" id="autoRestartToggle" checked={form.autoRestart} onChange={(e) => set('autoRestart', e.target.checked)} />
+                <input type="checkbox" id="autoRestartToggle" {...register('autoRestart')} />
                 <span>
                   Restart automatically if it crashes <span className="field-hint">(gives up after 5 restarts in a row)</span>
                 </span>
@@ -374,14 +431,14 @@ export function EditorModal() {
         )}
 
         <label className="checkbox-row" htmlFor="stdinToggle">
-          <input type="checkbox" id="stdinToggle" checked={form.stdinEnabled} onChange={(e) => set('stdinEnabled', e.target.checked)} />
+          <input type="checkbox" id="stdinToggle" {...register('stdinEnabled')} />
           <span>
             Provide stdin input <span className="field-hint">(piped into the command as it runs)</span>
           </span>
         </label>
-        {form.stdinEnabled && (
+        {stdinEnabled && (
           <div>
-            <textarea id="newStdin" className="field-textarea" rows={2} placeholder="Text piped to the command's stdin" value={form.stdin} onChange={(e) => set('stdin', e.target.value)} />
+            <textarea id="newStdin" className="field-textarea" rows={2} placeholder="Text piped to the command's stdin" {...register('stdin')} />
           </div>
         )}
 
@@ -389,37 +446,17 @@ export function EditorModal() {
           Environment variables <span className="field-hint">(optional, added on top of the normal environment)</span>
         </label>
         <div className="env-list">
-          {form.env.map((row, i) => (
-            <div className="env-row" key={i}>
-              <input
-                type="text"
-                className="field-input env-key-input"
-                placeholder="KEY"
-                value={row.key}
-                onChange={(e) => {
-                  const env = [...form.env];
-                  env[i] = { ...env[i], key: e.target.value };
-                  set('env', env);
-                }}
-              />
-              <input
-                type="text"
-                className="field-input env-value-input"
-                placeholder="value"
-                value={row.value}
-                onChange={(e) => {
-                  const env = [...form.env];
-                  env[i] = { ...env[i], value: e.target.value };
-                  set('env', env);
-                }}
-              />
-              <button type="button" className="step-remove-btn" title="Remove" onClick={() => set('env', form.env.filter((_, idx) => idx !== i))}>
+          {envArray.fields.map((field, i) => (
+            <div className="env-row" key={field.id}>
+              <input type="text" className="field-input env-key-input" placeholder="KEY" {...register(`env.${i}.key` as const)} />
+              <input type="text" className="field-input env-value-input" placeholder="value" {...register(`env.${i}.value` as const)} />
+              <button type="button" className="step-remove-btn" title="Remove" onClick={() => envArray.remove(i)}>
                 <Trash2 size={13} />
               </button>
             </div>
           ))}
         </div>
-        <button type="button" className="btn btn-ghost btn-small" onClick={() => set('env', [...form.env, { key: '', value: '' }])}>
+        <button type="button" className="btn btn-ghost btn-small" onClick={() => envArray.append({ key: '', value: '' })}>
           + Add variable
         </button>
 
@@ -428,13 +465,13 @@ export function EditorModal() {
             <label className="field-label" htmlFor="expectExitCode">
               Expect exit code <span className="field-hint">(optional)</span>
             </label>
-            <input type="number" id="expectExitCode" className="field-input" placeholder="e.g. 0" value={form.expectExitCode} onChange={(e) => set('expectExitCode', e.target.value)} />
+            <input type="number" id="expectExitCode" className="field-input" placeholder="e.g. 0" {...register('expectExitCode')} />
           </div>
           <div className="field-col">
             <label className="field-label" htmlFor="expectOutput">
               Expect output contains <span className="field-hint">(optional)</span>
             </label>
-            <input type="text" id="expectOutput" className="field-input" placeholder="e.g. OK" autoComplete="off" value={form.expectOutput} onChange={(e) => set('expectOutput', e.target.value)} />
+            <input type="text" id="expectOutput" className="field-input" placeholder="e.g. OK" autoComplete="off" {...register('expectOutput')} />
           </div>
         </div>
 
@@ -448,8 +485,7 @@ export function EditorModal() {
           placeholder="Start typing a snippet name…"
           autoComplete="off"
           list="runAfterDatalist"
-          value={form.runAfterInput}
-          onChange={(e) => set('runAfterInput', e.target.value)}
+          {...register('runAfterInput')}
         />
         <datalist id="runAfterDatalist">
           {candidates.map((s) => (
@@ -467,8 +503,7 @@ export function EditorModal() {
           placeholder="Start typing a snippet name…"
           autoComplete="off"
           list="runBeforeDatalist"
-          value={form.runBeforeInput}
-          onChange={(e) => set('runBeforeInput', e.target.value)}
+          {...register('runBeforeInput')}
         />
         <datalist id="runBeforeDatalist">
           {candidates.map((s) => (
@@ -477,39 +512,39 @@ export function EditorModal() {
         </datalist>
 
         <label className="checkbox-row" htmlFor="scheduleToggle">
-          <input type="checkbox" id="scheduleToggle" checked={form.scheduleEnabled} onChange={(e) => set('scheduleEnabled', e.target.checked)} />
+          <input type="checkbox" id="scheduleToggle" {...register('scheduleEnabled')} />
           <span>
             Run on a schedule <span className="field-hint">(in the background, while the app is running)</span>
           </span>
         </label>
-        {form.scheduleEnabled && (
+        {scheduleEnabled && (
           <div>
             <div className="segmented" id="scheduleTypeSegmented">
               {(['interval', 'daily', 'cron'] as ScheduleType[]).map((t) => (
                 <button
                   type="button"
                   key={t}
-                  className={'segmented-btn' + (form.scheduleType === t ? ' active' : '')}
-                  onClick={() => set('scheduleType', t)}
+                  className={'segmented-btn' + (scheduleType === t ? ' active' : '')}
+                  onClick={() => setValue('scheduleType', t)}
                 >
                   {t === 'interval' ? 'Every N minutes' : t === 'daily' ? 'Daily at' : 'Cron'}
                 </button>
               ))}
             </div>
-            {form.scheduleType === 'interval' && (
+            {scheduleType === 'interval' && (
               <div className="schedule-field-row">
-                <input type="number" className="field-input" min={1} placeholder="60" value={form.intervalMinutes} onChange={(e) => set('intervalMinutes', e.target.value)} />
+                <input type="number" className="field-input" min={1} placeholder="60" {...register('intervalMinutes')} />
                 <span className="field-hint">minutes</span>
               </div>
             )}
-            {form.scheduleType === 'daily' && (
+            {scheduleType === 'daily' && (
               <div className="schedule-field-row">
-                <input type="time" className="field-input" value={form.dailyTime} onChange={(e) => set('dailyTime', e.target.value)} />
+                <input type="time" className="field-input" {...register('dailyTime')} />
               </div>
             )}
-            {form.scheduleType === 'cron' && (
+            {scheduleType === 'cron' && (
               <div className="schedule-field-row">
-                <input type="text" className="field-input" placeholder="*/15 * * * *" value={form.cronExpr} onChange={(e) => set('cronExpr', e.target.value)} />
+                <input type="text" className="field-input" placeholder="*/15 * * * *" {...register('cronExpr')} />
                 <p className="field-hint">5 fields: minute hour day-of-month month day-of-week — <code>*</code>, <code>*/n</code>, ranges and lists supported.</p>
               </div>
             )}
@@ -519,13 +554,13 @@ export function EditorModal() {
         <label className="field-label" htmlFor="newNotes">
           Notes <span className="field-hint">(optional — shown expandable on the card)</span>
         </label>
-        <textarea id="newNotes" className="field-textarea notes-textarea" rows={2} placeholder="Why this snippet exists, gotchas, links…" value={form.notes} onChange={(e) => set('notes', e.target.value)} />
+        <textarea id="newNotes" className="field-textarea notes-textarea" rows={2} placeholder="Why this snippet exists, gotchas, links…" {...register('notes')} />
 
         <div className="modal-actions">
           <button type="button" id="cancelAddBtn" className="btn btn-ghost" onClick={closeModal}>
             Cancel
           </button>
-          <button type="button" id="saveAddBtn" className="btn btn-primary" onClick={save}>
+          <button type="button" id="saveAddBtn" className="btn btn-primary" onClick={handleSubmit(onValid, onInvalid)}>
             {editingId ? 'Save changes' : 'Save snippet'}
           </button>
         </div>

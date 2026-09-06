@@ -10,6 +10,7 @@
 // instead of just resetting that one file to its default.
 import fs from 'node:fs';
 import path from 'node:path';
+import writeFileAtomic from 'write-file-atomic';
 import { Notification } from 'electron';
 
 export function stripBom(text: string): string {
@@ -73,4 +74,22 @@ export function readJsonFileSafe<T>(
     notifyCorruption(filePath, backupPath);
     return fallback;
   }
+}
+
+/**
+ * JSON.stringifies `data` and writes it to `filePath` (creating its parent
+ * directory if needed) via write-file-atomic's synchronous API — write to a
+ * temp file in the same directory, then rename over the real one, so a
+ * crash, power loss, or killed process mid-write can never leave `filePath`
+ * itself truncated/corrupt (a plain fs.writeFileSync can, and readJsonFileSafe
+ * above exists partly to cope with exactly that after the fact). Every
+ * storage module's write function should go through this instead of a bare
+ * fs.writeFileSync(path, JSON.stringify(...)) — same reasoning as
+ * readJsonFileSafe on the read side. Throws on failure, same as
+ * fs.writeFileSync did — callers that want to swallow/log the error (like
+ * storage/app-settings.ts) still wrap this in their own try/catch.
+ */
+export function writeJsonFileAtomic(filePath: string, data: unknown): void {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  writeFileAtomic.sync(filePath, JSON.stringify(data, null, 2), 'utf8');
 }

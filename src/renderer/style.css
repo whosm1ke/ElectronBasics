@@ -165,6 +165,14 @@ body {
 
 .search-input {
   flex: 1;
+  /* A flex item's default min-width is `auto` (its content's intrinsic
+     minimum), not 0 — for a text <input> that's a browser-defined size
+     large enough that, once the window shrinks past a point, .search-bar's
+     other children (the 7 icon buttons) got pushed past the header's right
+     edge and clipped by .app-shell's overflow:hidden instead of the input
+     just shrinking further. Only mattered once the window became
+     user-resizable (see window.ts's MIN_WINDOW_WIDTH). */
+  min-width: 0;
   background: transparent;
   border: none;
   outline: none;
@@ -1429,6 +1437,22 @@ kbd {
   background: var(--surface-active);
   padding: 1px 4px;
   border-radius: 4px;
+}
+
+/* react-hook-form + zodResolver inline field errors (EditorModal.tsx) —
+   replaces what used to be toast-only validation feedback for a handful of
+   fields (name, command/steps, expect exit code, schedule interval). */
+.field-input.field-invalid,
+.field-textarea.field-invalid {
+  border-color: var(--danger);
+}
+
+.field-error {
+  display: block;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--danger);
+  margin-top: 4px;
 }
 
 .field-row {

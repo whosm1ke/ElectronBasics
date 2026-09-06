@@ -54,5 +54,18 @@ export default defineConfig({
     root: 'src/renderer',
     resolve: { alias: sharedAlias },
     plugins: [react(), devCspPlugin()],
+    // electron-vite's own internal default is `minify: false` for every
+    // one of the three processes (main/preload/renderer) — it defers
+    // entirely to whatever build.minify the user configures, rather than
+    // inheriting Vite's own normal production default ('esbuild'). Left
+    // unset, that means a real, packaged, user-facing `npm run build`
+    // ships completely unminified renderer JS: bigger download, slower
+    // parse/startup, and plain-readable source in the distributable.
+    // Renderer specifically opts back in here since it's the one bundle a
+    // real user's machine actually has to load/parse; main/preload are
+    // left at electron-vite's default (unminified) since that doesn't
+    // affect perceived launch time the same way and keeps their
+    // console.error stack traces easy to read from a shipped app's logs.
+    build: { minify: 'esbuild' },
   },
 });

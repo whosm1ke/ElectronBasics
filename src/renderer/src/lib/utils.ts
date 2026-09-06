@@ -2,7 +2,17 @@
 // no Electron API calls, no imports of any other app module. Ported
 // verbatim from modules/utils.js (now a re-export shim pointing here) —
 // see CLAUDE.md's migration notes on the strangler-fig approach.
+import { differenceInSeconds, differenceInMinutes, differenceInHours, differenceInDays, differenceInWeeks, differenceInMonths, differenceInYears } from 'date-fns';
+import { newId } from '@shared/id';
 import type { Snippet, ShellType, PipelineEdge } from '@shared/types';
+
+// Re-exported (not reimplemented) — used to be its own near-identical copy
+// here, consolidated into one shared implementation once the zod schemas in
+// @shared/types needed the same generator for their id-backfill logic.
+// Every call site in this file passes its own prefix explicitly, so
+// @shared/id's default ('id') vs this file's old default ('snip') was never
+// actually relied upon.
+export { newId };
 
 export const TAG_ICONS: Record<string, string> = {
   network: '\u{1F310}', system: '\u{1F5A5}\u{FE0F}', disk: '\u{1F4BE}',
@@ -56,18 +66,31 @@ export function tagColors(tag: string): { bg: string; fg: string } {
   };
 }
 
+// Kept this app's own compact "Ns/Nm/Nh/Nd ago" style rather than switching
+// to date-fns's formatDistanceToNow() (wordier: "about 13 hours ago") — the
+// actual gap this replaced date-fns for was accuracy past the day tier, not
+// the visual style. Hand-rolled month/year math (dividing seconds by a
+// fixed 86400*30/86400*365) drifts against real calendar months/years;
+// date-fns's differenceInX() functions account for actual month lengths and
+// leap years, so a run "412d ago" now correctly reads as "1y ago" instead.
 export function timeAgo(iso: string | null | undefined): string {
   if (!iso) return '';
-  const diffMs = Date.now() - new Date(iso).getTime();
-  const sec = Math.max(0, Math.floor(diffMs / 1000));
+  const date = new Date(iso);
+  const now = Date.now();
+  const sec = Math.max(0, differenceInSeconds(now, date));
   if (sec < 5) return 'just now';
   if (sec < 60) return `${sec}s ago`;
-  const min = Math.floor(sec / 60);
+  const min = differenceInMinutes(now, date);
   if (min < 60) return `${min}m ago`;
-  const hr = Math.floor(min / 60);
+  const hr = differenceInHours(now, date);
   if (hr < 24) return `${hr}h ago`;
-  const day = Math.floor(hr / 24);
-  return `${day}d ago`;
+  const day = differenceInDays(now, date);
+  if (day < 7) return `${day}d ago`;
+  const week = differenceInWeeks(now, date);
+  if (week < 5) return `${week}w ago`; // caps at 4 to avoid ever reading "4w ago" and "1mo ago" for dates a day apart
+  const month = differenceInMonths(now, date);
+  if (month < 12) return `${month}mo ago`;
+  return `${differenceInYears(now, date)}y ago`;
 }
 
 const HTML_ESCAPES: Record<string, string> = {
@@ -88,10 +111,6 @@ export function prettyMaybeJson(text: string): string {
   } catch {
     return text;
   }
-}
-
-export function newId(prefix = 'snip'): string {
-  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
 /**

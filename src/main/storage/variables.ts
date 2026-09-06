@@ -1,18 +1,16 @@
 // storage/variables.ts — reusable named placeholder values ({id,name,value,secret}).
+// The schema itself (VariableSchema, @shared/types/variable.ts) is the
+// single source of truth for both the Variable type and the
+// backfill/coercion logic that runs on both read and write.
 import fs from 'node:fs';
-import path from 'node:path';
 import { VARIABLES_FILE } from '../paths';
-import { newId } from '../id';
-import { readJsonFileSafe } from '../json-file';
+import { readJsonFileSafe, writeJsonFileAtomic } from '../json-file';
 import type { Variable } from '@shared/types';
+import { VariableSchema } from '@shared/types';
 
-export function sanitizeVariable(v: Partial<Variable>): Variable {
-  return {
-    id: String(v.id ?? newId('var')),
-    name: String(v.name ?? '').trim().slice(0, 100),
-    value: String(v.value ?? '').slice(0, 2000),
-    secret: Boolean(v.secret),
-  };
+/** Thin, still-exported wrapper around VariableSchema.parse(). */
+export function sanitizeVariable(v: unknown): Variable {
+  return VariableSchema.parse(v);
 }
 
 export function readVariables(): Variable[] {
@@ -23,7 +21,6 @@ export function readVariables(): Variable[] {
 
 export function writeVariables(vars: unknown): Variable[] {
   const sanitized = Array.isArray(vars) ? vars.map(sanitizeVariable) : [];
-  fs.mkdirSync(path.dirname(VARIABLES_FILE), { recursive: true });
-  fs.writeFileSync(VARIABLES_FILE, JSON.stringify(sanitized, null, 2), 'utf8');
+  writeJsonFileAtomic(VARIABLES_FILE, sanitized);
   return sanitized;
 }

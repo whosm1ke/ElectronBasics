@@ -10,7 +10,7 @@ import { runShellCommand } from './shell/exec';
 import { openTerminal } from './shell/terminal';
 import * as processManager from './shell/process-manager';
 import { envListToObject } from './env-utils';
-import { newId } from './id';
+import { newId } from '@shared/id';
 
 import * as snippetsStore from './storage/snippets';
 import * as historyStore from './storage/history';

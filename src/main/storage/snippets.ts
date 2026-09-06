@@ -1,16 +1,22 @@
-// storage/snippets.ts — the snippet library: schema, defaults, read/write.
-// sanitizeSnippet() is the schema's single source of truth; it backfills
-// missing fields on read (so hand-edited or older-schema files never break
-// the UI) and on write (so nothing malformed ever reaches disk).
+// storage/snippets.ts — the snippet library: defaults + read/write. The
+// schema itself (SnippetSchema, @shared/types/snippet.ts) is the single
+// source of truth for both the Snippet type and the backfill/coercion logic
+// that runs on both read and write (so hand-edited or older-schema files
+// never break the UI, and nothing malformed ever reaches disk) — see that
+// file's own header comment for why it's a zod schema rather than a
+// hand-written interface + a separate sanitizer function.
 import fs from 'node:fs';
-import path from 'node:path';
 import { SNIPPETS_FILE } from '../paths';
-import { newId } from '../id';
-import { readJsonFileSafe } from '../json-file';
-import type { Snippet, ShellType, EnvVar, ExpectConfig, ScheduleConfig } from '@shared/types';
-import { VALID_SHELLS } from '@shared/types';
+import { readJsonFileSafe, writeJsonFileAtomic } from '../json-file';
+import type { Snippet } from '@shared/types';
+import { SnippetSchema, VALID_SHELLS } from '@shared/types';
 
 export { VALID_SHELLS };
+
+/** Thin, still-exported wrapper around SnippetSchema.parse() — kept as a named function since ipc.ts's snippet-import path calls this by name. */
+export function sanitizeSnippet(s: unknown): Snippet {
+  return SnippetSchema.parse(s);
+}
 
 interface DefaultSnippetSeed {
   id: string;
@@ -151,83 +157,10 @@ export const DEFAULT_SNIPPETS: Snippet[] = DEFAULT_SNIPPET_SEEDS.map((s) => ({
   autoRestart: false,
 }));
 
-function sanitizeEnvList(env: unknown): EnvVar[] | null {
-  if (!Array.isArray(env)) return null;
-  const cleaned = env
-    .map((e) => ({
-      key: String((e && e.key) ?? '').trim().slice(0, 100),
-      value: String((e && e.value) ?? '').slice(0, 2000),
-    }))
-    .filter((e) => e.key)
-    .slice(0, 20);
-  return cleaned.length ? cleaned : null;
-}
-
-function sanitizeExpect(exp: unknown): ExpectConfig | null {
-  if (!exp || typeof exp !== 'object') return null;
-  const e = exp as { exitCode?: unknown; outputContains?: unknown };
-  const exitCode = Number.isFinite(e.exitCode) ? (e.exitCode as number) : null;
-  const outputContains =
-    typeof e.outputContains === 'string' && e.outputContains.trim() ? e.outputContains.slice(0, 500) : null;
-  if (exitCode === null && !outputContains) return null;
-  return { exitCode, outputContains };
-}
-
-function sanitizeSchedule(sch: unknown): ScheduleConfig | null {
-  if (!sch || typeof sch !== 'object') return null;
-  const s = sch as Record<string, unknown>;
-  const type = ['interval', 'daily', 'cron'].includes(s.type as string) ? (s.type as ScheduleConfig['type']) : 'interval';
-  return {
-    enabled: Boolean(s.enabled),
-    type,
-    intervalMinutes: Number.isFinite(s.intervalMinutes) ? Math.max(1, Math.round(s.intervalMinutes as number)) : 60,
-    dailyTime: /^\d{2}:\d{2}$/.test((s.dailyTime as string) || '') ? (s.dailyTime as string) : '09:00',
-    cronExpr:
-      typeof s.cronExpr === 'string' && s.cronExpr.trim() ? s.cronExpr.trim().slice(0, 100) : '*/15 * * * *',
-    lastRunAt: s.lastRunAt ? String(s.lastRunAt) : null,
-  };
-}
-
-/** Normalizes a raw snippet object, backfilling fields older/hand-edited files may lack. */
-export function sanitizeSnippet(s: Record<string, unknown>): Snippet {
-  const steps = Array.isArray(s.steps)
-    ? (s.steps as unknown[]).map((step) => String(step).slice(0, 5000)).slice(0, 20).filter(Boolean)
-    : null;
-  return {
-    id: String(s.id ?? newId('snip')),
-    name: String(s.name ?? '').slice(0, 200),
-    tag: String(s.tag ?? 'misc').slice(0, 50),
-    command: String(s.command ?? '').slice(0, 5000),
-    pinned: Boolean(s.pinned),
-    runCount: Number.isFinite(s.runCount) ? (s.runCount as number) : 0,
-    lastRunAt: s.lastRunAt ? String(s.lastRunAt) : null,
-    cwd: s.cwd ? String(s.cwd).slice(0, 1000) : null,
-    shell: VALID_SHELLS.includes(s.shell as ShellType) ? (s.shell as ShellType) : 'powershell',
-    elevated: Boolean(s.elevated),
-    steps: steps && steps.length > 0 ? steps : null,
-    stdin: s.stdin ? String(s.stdin).slice(0, 5000) : null,
-    icon: s.icon ? String(s.icon).slice(0, 8) : null,
-    notes: s.notes ? String(s.notes).slice(0, 2000) : null,
-    env: sanitizeEnvList(s.env),
-    expect: sanitizeExpect(s.expect),
-    runAfterThis: s.runAfterThis ? String(s.runAfterThis) : null,
-    runBefore: s.runBefore ? String(s.runBefore) : null,
-    stopOnStepError: Boolean(s.stopOnStepError),
-    schedule: sanitizeSchedule(s.schedule),
-    // `background`: run as a long-lived process (Start/Stop instead of a
-    // one-shot Run) — only meaningful for a single-command snippet, never a
-    // multi-step sequence (see process-manager.ts). `autoRestart` only
-    // matters when `background` is also true.
-    background: Boolean(s.background) && !(steps && steps.length > 0),
-    autoRestart: Boolean(s.autoRestart),
-  };
-}
-
 export function ensureSnippetsFile(): void {
   try {
     if (!fs.existsSync(SNIPPETS_FILE)) {
-      fs.mkdirSync(path.dirname(SNIPPETS_FILE), { recursive: true });
-      fs.writeFileSync(SNIPPETS_FILE, JSON.stringify(DEFAULT_SNIPPETS, null, 2), 'utf8');
+      writeJsonFileAtomic(SNIPPETS_FILE, DEFAULT_SNIPPETS);
     }
   } catch (err) {
     console.error('Failed to initialize snippets file:', err);
@@ -245,7 +178,6 @@ export function writeSnippets(snippets: unknown): Snippet[] {
     throw new Error('Snippets payload must be an array.');
   }
   const sanitized = snippets.map(sanitizeSnippet);
-  fs.mkdirSync(path.dirname(SNIPPETS_FILE), { recursive: true });
-  fs.writeFileSync(SNIPPETS_FILE, JSON.stringify(sanitized, null, 2), 'utf8');
+  writeJsonFileAtomic(SNIPPETS_FILE, sanitized);
   return sanitized;
 }

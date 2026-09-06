@@ -8,7 +8,7 @@ import { readSnippets, writeSnippets } from './storage/snippets';
 import { appendHistory } from './storage/history';
 import { runShellCommand } from './shell/exec';
 import { envListToObject } from './env-utils';
-import { newId } from './id';
+import { newId } from '@shared/id';
 import { showWindow, getMainWindow } from './window';
 import type { Snippet, ScheduleConfig } from '@shared/types';
 

@@ -3,12 +3,63 @@
 // modal. No rendering lives here — persistSnippets() just emits
 // 'snippets-changed'; SnippetList.tsx (via useSnippetsVersion) redraws
 // itself. Ported from modules/snippets-store.js.
+import Fuse, { type IFuseOptions } from 'fuse.js';
 import type { Snippet } from '@shared/types';
 import { newId } from './utils';
 import { emitSnippetsChanged } from './events';
 import { state } from '../../modules/state';
 
 export type SortMode = 'manual' | 'az' | 'most-used' | 'recent';
+
+// Weighted multi-field fuzzy search (replaces the old plain
+// haystack.includes(query) substring match) — name matches rank above one
+// buried in a long multi-step command, and typos/partial words still find
+// the right snippet. `steps` alongside `command` is belt-and-suspenders:
+// storage/snippets.ts always keeps `command` populated (joined from `steps`
+// for a sequence) so this key alone should already cover multi-step
+// snippets, but searching both matches what the original substring haystack
+// did (it explicitly included both too).
+//
+// Every option below was tuned against this app's own default 42-snippet
+// library, not left at Fuse's defaults (0.6 threshold, no minMatchCharLength)
+// — the note that recommended this library explicitly warned to do exactly
+// that ("tune the weights/threshold... to avoid making results feel worse
+// via over-eager fuzzy matches"), and the untuned defaults genuinely did:
+// - `ignoreLocation: true` is required, not optional — Fuse's default
+//   location-sensitive scoring only looks near the *start* of a field, so a
+//   word appearing late in a long multi-step `command` string (exactly the
+//   case this library replacement was meant to help with) scored as no
+//   match at all. Confirmed with a synthetic long-command snippet during
+//   this tuning: `kubectl` buried ~130 characters into a joined command was
+//   found with ignoreLocation:true and silently missed without it.
+// - `minMatchCharLength: 3` turned out load-bearing too: without it, a
+//   short/common-letter query (e.g. "gti", a two-letter transposition typo
+//   of "git") fuzzy-matched against 20+ unrelated snippets once the
+//   threshold was loose enough to tolerate the typo at all — short queries
+//   have very little "edit budget" to work with, so weak partial-character
+//   matches on long free-text fields (`command`/`notes`) satisfied the
+//   threshold almost by coincidence. Filtering out sub-3-character partial
+//   matches removed that noise entirely without giving up the typo
+//   tolerance itself: "gti" now returns exactly the same result set as
+//   typing "git" correctly, no more and no less.
+// - `threshold: 0.35` (Fuse's own default is 0.6, notably looser) is the
+//   tightest value that still caught realistic single-typo queries tested
+//   against the real snippet set ("staus"→status, "netowrk"→network,
+//   "dokcer"→docker, "uptme"→uptime) without also matching queries that
+//   share no real relationship to the result.
+const SEARCH_OPTIONS: IFuseOptions<Snippet> = {
+  ignoreLocation: true,
+  minMatchCharLength: 3,
+  threshold: 0.35,
+  keys: [
+    { name: 'name', weight: 2 },
+    { name: 'tag', weight: 1.5 },
+    { name: 'command', weight: 1 },
+    { name: 'steps', weight: 1 },
+    { name: 'cwd', weight: 0.5 },
+    { name: 'notes', weight: 0.5 },
+  ],
+};
 
 export async function loadSnippets(): Promise<void> {
   state.snippets = await window.electronAPI.loadSnippets();
@@ -64,20 +115,26 @@ export function isReorderable(searchValue: string): boolean {
 
 /** Recomputes state.filtered/selectedIndex from state.snippets + the current filters. Does not render — SnippetList.tsx does that on 'snippets-changed' (via refresh()) or when called directly after a filter-only UI change (search/tag/sort/group). */
 export function applyFilter(searchValue: string): void {
-  const query = searchValue.trim().toLowerCase();
+  const query = searchValue.trim();
   let list = (state.snippets as Snippet[]).slice();
 
   if (state.activeTag) {
     list = list.filter((s) => s.tag.toLowerCase() === state.activeTag);
   }
+
   if (query) {
-    list = list.filter((s) => {
-      const haystack = [s.name, s.tag, s.command, s.cwd || '', s.notes || '', (s.steps || []).join(' ')].join(' ').toLowerCase();
-      return haystack.includes(query);
-    });
+    // Relevance ranking (fuse.js) wins over state.sortMode while actively
+    // searching — az/most-used/recent describe how to browse the *whole*
+    // library, not how to rank one search's own results. Pinned-first still
+    // applies on top, bucketed exactly like sortSnippets does for every
+    // other mode, just ranked by relevance *within* each bucket instead of
+    // by the sort comparator.
+    const ranked = new Fuse(list, SEARCH_OPTIONS).search(query).map((r) => r.item);
+    list = [...ranked.filter((s) => s.pinned), ...ranked.filter((s) => !s.pinned)];
+  } else {
+    list = sortSnippets(list, state.sortMode as SortMode);
   }
 
-  list = sortSnippets(list, state.sortMode as SortMode);
   if (state.groupView) list = regroupByTag(list);
 
   state.filtered = list;
