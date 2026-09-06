@@ -1,14 +1,13 @@
 // ThemedSelect.tsx — a themed dropdown built on @radix-ui/react-select,
-// shared by every componentized <select> in the app (EditorModal's shell
-// picker, PipelinesModal's edge-condition picker). Replaces the old
+// shared by every <select> in the app (EditorModal's shell picker,
+// PipelinesModal's edge-condition picker, SortModeSelect.tsx's header
+// sort-order picker — mounted into a static container via legacyMounts.tsx
+// since the header itself isn't a React component). Replaces the old
 // `.select-wrap` + absolutely-positioned `<svg class="select-chevron">`
-// workaround documented in CLAUDE.md's Theming section — that hack existed
-// only because a native <select>'s own arrow can't be restyled; Radix's
-// trigger is a real element we lay out ourselves, so no overlay trick is
-// needed here (the header's plain, non-React sort-mode <select> still uses
-// the old .select-wrap pattern — it isn't a React component to begin with,
-// so folding it into this one would mean mounting a new React root into a
-// static container, a bigger change than a library swap; left as-is).
+// workaround that used to be documented in CLAUDE.md's Theming section —
+// that hack existed only because a native <select>'s own arrow can't be
+// restyled; Radix's trigger is a real element we lay out ourselves, so no
+// overlay trick is needed here.
 import * as Select from '@radix-ui/react-select';
 import { ChevronDown, Check } from 'lucide-react';
 

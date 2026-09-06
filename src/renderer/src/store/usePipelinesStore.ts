@@ -1,5 +1,5 @@
 // usePipelinesStore.ts — open/closed + list/editor view state for the
-// Pipelines modal, plus the saved pipelines list itself (nothing else in
+// Pipelines screen, plus the saved pipelines list itself (nothing else in
 // the app reads it, unlike groups/variables — safe to keep fully local
 // here rather than split against modules/state.js). Ported from
 // modules/pipeline-editor.js. The *working copy* being edited
@@ -46,9 +46,4 @@ export function isPipelinesOpen(): boolean {
 export async function savePipelinesList(pipelines: Pipeline[]): Promise<void> {
   const saved = await window.electronAPI.savePipelines(pipelines);
   useStore.setState({ pipelines: saved });
-}
-
-/** Reopens the modal (to whichever view it was showing) once a pipeline run's results modal closes — see PipelinesModal.tsx's onBatchModalClosed listener for why this needs to be callable from outside a render. */
-export function reopenAt(view: 'list' | 'editor'): void {
-  useStore.setState({ open: true, view });
 }

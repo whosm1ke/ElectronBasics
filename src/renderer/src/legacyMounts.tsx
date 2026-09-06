@@ -9,6 +9,7 @@ import { StrictMode } from 'react';
 import { SnippetList } from './components/Card/SnippetList';
 import { TagFilters } from './components/TagFilters';
 import { FavoritesBar } from './components/FavoritesBar';
+import { SortModeSelect } from './components/SortModeSelect';
 
 function mount(id: string, node: React.ReactNode): void {
   const container = document.getElementById(id);
@@ -23,4 +24,5 @@ export function mountLegacyReplacements(): void {
   mount('snippetList', <SnippetList />);
   mount('tagFilters', <TagFilters />);
   mount('favoritesBar', <FavoritesBar />);
+  mount('sortModeSelect', <SortModeSelect />);
 }

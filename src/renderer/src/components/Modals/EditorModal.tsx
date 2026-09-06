@@ -27,9 +27,10 @@ import { z } from 'zod';
 import { Trash2 } from 'lucide-react';
 import type { ShellType, ScheduleType, Snippet, EnvVar } from '@shared/types';
 import { VALID_SHELLS, VALID_SCHEDULE_TYPES } from '@shared/types';
-import { newId, findDependencyCycle } from '../../lib/utils';
+import { newId, findDependencyCycle, snippetIcon } from '../../lib/utils';
 import { showToast } from '../../lib/toast';
 import { ThemedSelect } from '../shared/ThemedSelect';
+import { ThemedCombobox, type ComboboxOption } from '../shared/ThemedCombobox';
 import { useEditorStore, closeModal } from '../../store/useEditorStore';
 import { state, ICON_PRESETS } from '../../../modules/state';
 import { persistSnippets } from '../../lib/snippetsStore';
@@ -192,6 +193,13 @@ export function EditorModal() {
   const tags = Array.from(new Set(snippets.map((s) => s.tag))).sort();
   const runAfterNameToId = new Map(candidates.map((s) => [displayTextFor(s, candidates), s.id]));
   const runBeforeNameToId = runAfterNameToId; // same candidate set, same display text
+  // Shared by both run-after/run-before combobox fields — same candidate
+  // set, same display text (the actual value stored/resolved), just an icon
+  // prefix on the label for a quicker visual scan.
+  const runRefOptions: ComboboxOption[] = candidates.map((s) => {
+    const text = displayTextFor(s, candidates);
+    return { value: text, filterText: text, label: <>{snippetIcon(s)} {text}</> };
+  });
 
   const multiStep = watch('multiStep');
   const shell = watch('shell');
@@ -303,12 +311,20 @@ export function EditorModal() {
         </div>
 
         <label className="field-label" htmlFor="newTag">Tag / category</label>
-        <input type="text" id="newTag" className="field-input" placeholder="e.g. network" autoComplete="off" list="tagDatalist" {...register('tag')} />
-        <datalist id="tagDatalist">
-          {tags.map((t) => (
-            <option value={t} key={t} />
-          ))}
-        </datalist>
+        <Controller
+          name="tag"
+          control={control}
+          render={({ field }) => (
+            <ThemedCombobox
+              id="newTag"
+              placeholder="e.g. network"
+              value={field.value}
+              onChange={field.onChange}
+              options={tags.map((t) => ({ value: t, label: t }))}
+              emptyLabel="No matching tags — type to create a new one"
+            />
+          )}
+        />
 
         <label className="checkbox-row" htmlFor="multiStepToggle">
           <input
@@ -478,38 +494,38 @@ export function EditorModal() {
         <label className="field-label" htmlFor="runAfterInput">
           Run after this one <span className="field-hint">(auto-runs once this snippet succeeds — type a snippet name)</span>
         </label>
-        <input
-          type="text"
-          id="runAfterInput"
-          className="field-input"
-          placeholder="Start typing a snippet name…"
-          autoComplete="off"
-          list="runAfterDatalist"
-          {...register('runAfterInput')}
+        <Controller
+          name="runAfterInput"
+          control={control}
+          render={({ field }) => (
+            <ThemedCombobox
+              id="runAfterInput"
+              placeholder="Start typing a snippet name…"
+              value={field.value}
+              onChange={field.onChange}
+              options={runRefOptions}
+              emptyLabel="No matching snippets"
+            />
+          )}
         />
-        <datalist id="runAfterDatalist">
-          {candidates.map((s) => (
-            <option value={displayTextFor(s, candidates)} key={s.id} />
-          ))}
-        </datalist>
 
         <label className="field-label" htmlFor="runBeforeInput">
           Run before this one <span className="field-hint">(runs first, every time this snippet runs; skipped if it fails — type a snippet name)</span>
         </label>
-        <input
-          type="text"
-          id="runBeforeInput"
-          className="field-input"
-          placeholder="Start typing a snippet name…"
-          autoComplete="off"
-          list="runBeforeDatalist"
-          {...register('runBeforeInput')}
+        <Controller
+          name="runBeforeInput"
+          control={control}
+          render={({ field }) => (
+            <ThemedCombobox
+              id="runBeforeInput"
+              placeholder="Start typing a snippet name…"
+              value={field.value}
+              onChange={field.onChange}
+              options={runRefOptions}
+              emptyLabel="No matching snippets"
+            />
+          )}
         />
-        <datalist id="runBeforeDatalist">
-          {candidates.map((s) => (
-            <option value={displayTextFor(s, candidates)} key={s.id} />
-          ))}
-        </datalist>
 
         <label className="checkbox-row" htmlFor="scheduleToggle">
           <input type="checkbox" id="scheduleToggle" {...register('scheduleEnabled')} />

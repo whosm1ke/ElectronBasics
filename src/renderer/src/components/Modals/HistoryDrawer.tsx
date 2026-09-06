@@ -5,13 +5,21 @@
 // modals/drawers, as opposed to the inline-content pattern used for
 // cards/tags/favorites).
 import { useState } from 'react';
-import { RotateCcw, Check, Copy, X } from 'lucide-react';
+import { RotateCcw, Check, Copy, X, Terminal, ChevronDown } from 'lucide-react';
 import type { HistoryEntry } from '@shared/types';
 import { escapeHtml, timeAgo } from '../../lib/utils';
 import { useHistoryStore, closeHistory, clearHistory, rerunFromHistory, setHistoryQuery } from '../../store/useHistoryStore';
 
 function HistoryItem({ entry }: { entry: HistoryEntry }) {
   const [copied, setCopied] = useState(false);
+  // Output stays collapsed by default — a history list is meant to be
+  // scanned quickly (name/time/status across many runs), and stdout/stderr
+  // previews can run to thousands of characters each; showing every run's
+  // full output unconditionally would make the list unreadable and force
+  // pointless scrolling to see just a few entries at once.
+  const [outputOpen, setOutputOpen] = useState(false);
+  const hasOutput = Boolean(entry.stdoutPreview || entry.stderrPreview);
+
   return (
     <div className="history-item">
       <div className="history-item-header">
@@ -46,7 +54,22 @@ function HistoryItem({ entry }: { entry: HistoryEntry }) {
             </>
           )}
         </button>
+        {hasOutput && (
+          <button type="button" className="btn" onClick={() => setOutputOpen((v) => !v)}>
+            <Terminal size={12} />
+            <span>Output</span>
+            <ChevronDown size={12} className={'history-output-chevron' + (outputOpen ? ' open' : '')} />
+          </button>
+        )}
       </div>
+      {outputOpen && hasOutput && (
+        <div className="card-output history-item-output">
+          <div className="card-output-body no-scrollbar">
+            {entry.stdoutPreview && <div className="stdout">{entry.stdoutPreview}</div>}
+            {entry.stderrPreview && <div className="stderr">{entry.stderrPreview}</div>}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

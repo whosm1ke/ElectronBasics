@@ -1,7 +1,16 @@
 // PipelinesModal.tsx — the Pipelines screen: a saved-list view (mirrors
 // GroupsModal.tsx) plus a node-graph canvas editor with a selection-driven
-// inspector side panel. Ported from modules/pipeline-editor.js, then from
-// a hand-rolled imperative canvas (mousedown/mousemove/mouseup dragging,
+// inspector side panel. Renders as a full-window "screen" (see style.css's
+// `.screen` section) rather than a small centered `.modal` dialog — same
+// pattern GroupsModal.tsx uses, replacing the snippet list for as long as
+// it's open with its own header Back button. (A brief detour: this
+// genuinely lived in its own separate BrowserWindow for a bit, since a
+// graph editor benefits from more room than a modal gets — reverted back
+// to the in-window screen model on request, since consistency with every
+// other full-screen feature in this app mattered more here.)
+//
+// Ported from modules/pipeline-editor.js, then from a hand-rolled
+// imperative canvas (mousedown/mousemove/mouseup dragging,
 // getBoundingClientRect()-based edge-line recomputation — CLAUDE.md used to
 // document this as the app's "one deliberately-not-fully-declarative piece
 // of UI") onto @xyflow/react (see pipeline/PipelineCanvas.tsx) — real
@@ -14,24 +23,16 @@
 // PipelineCanvas as plain, controlled data; only PipelineCanvas.tsx and
 // pipelineFlow.ts need to know React Flow's own Node/Edge shape exists.
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
-import { Play, Pencil, Wand2, Copy, Share2 } from 'lucide-react';
+import { ArrowLeft, Play, Pencil, Wand2, Copy, Share2 } from 'lucide-react';
 import type { Pipeline, PipelineNode, PipelineEdge, EdgeCondition, Snippet } from '@shared/types';
 import { snippetIcon, newId, SHELL_LABELS, pipelineConditionLabel, tryCreatePipelineEdge } from '../../lib/utils';
 import { showToast } from '../../lib/toast';
 import { ThemedSelect } from '../shared/ThemedSelect';
 import { PipelineCanvas, type Selection } from './pipeline/PipelineCanvas';
 import { layoutPipelineNodes } from '../../lib/pipelineLayout';
-import {
-  usePipelinesStore,
-  openPipelineEditor,
-  showPipelinesListView,
-  closePipelines,
-  savePipelinesList,
-  reopenAt,
-} from '../../store/usePipelinesStore';
+import { usePipelinesStore, openPipelineEditor, showPipelinesListView, closePipelines, savePipelinesList } from '../../store/usePipelinesStore';
 import { state } from '../../../modules/state';
 import { persistSnippets } from '../../lib/snippetsStore';
-import { onBatchModalClosed } from '../../lib/events';
 import { runPipelineGraph } from '../../lib/pipelineEngine';
 
 /** Every saved snippet, formatted for the shared picker menu — used by both "+ Add step" and "Change step…", which both pick a snippet the same way. */
@@ -54,68 +55,62 @@ const CONDITION_OPTIONS: [EdgeCondition, string][] = [
   ['outputContains', 'Output contains text'],
 ];
 
-// --- Pending "reopen after a pipeline run's results modal closes" — same
-// idea as the original's module-level pendingPipelineReturn, needed because
-// running hides this modal (see the header comment in the original for
-// why: two same-z-index modal-overlays, later-in-DOM wins the stack). ----
-let pendingPipelineReturn: 'list' | 'editor' | null = null;
-onBatchModalClosed(() => {
-  if (!pendingPipelineReturn) return;
-  const mode = pendingPipelineReturn;
-  pendingPipelineReturn = null;
-  reopenAt(mode);
-});
-
 function ListView() {
   const { pipelines } = usePipelinesStore();
 
+  // Closes this screen before running — same reasoning as GroupsModal.tsx's
+  // runGroup(): the batch-results modal and this screen are both
+  // full-window overlays, so leaving this open would just bury the results
+  // underneath it (or vice versa, depending on DOM order) rather than
+  // showing them.
   async function runSaved(pipeline: Pipeline) {
-    pendingPipelineReturn = 'list';
     closePipelines();
     await runPipelineGraph(pipeline.nodes, pipeline.edges);
     await persistSnippets({ silent: true }); // runCount/lastRunAt bumps — cards pick them up next real refresh
   }
 
   return (
-    <div>
-      <h2>Pipelines</h2>
-      <p className="field-hint">Chain snippets with branching — run different steps depending on whether the previous one succeeded.</p>
-      <div className="groups-list no-scrollbar">
-        {pipelines.length === 0 ? (
-          <div className="variables-empty">No pipelines yet. Build a small graph of steps that branch on success/failure/output, then run it with one click.</div>
-        ) : (
-          pipelines.map((p) => (
-            <div className="group-row" key={p.id}>
-              <div className="group-row-info">
-                <div className="group-row-name">{p.name || '(untitled pipeline)'}</div>
-                <div className="group-row-count">
-                  {p.nodes.length} step{p.nodes.length === 1 ? '' : 's'} · {p.edges.length} connection{p.edges.length === 1 ? '' : 's'}
-                </div>
-                {p.description && <div className="group-row-description">{p.description}</div>}
-              </div>
-              <button type="button" className="btn btn-small btn-primary" onClick={() => runSaved(p)}>
-                <Play size={13} fill="currentColor" stroke="none" />
-                <span>Run</span>
-              </button>
-              <button type="button" className="btn btn-small" onClick={() => openPipelineEditor(p)}>
-                <Pencil size={13} />
-                <span>Edit</span>
-              </button>
-            </div>
-          ))
-        )}
-      </div>
-      <div className="modal-actions modal-actions-left">
+    <>
+      <div className="screen-header">
+        <button type="button" className="icon-btn" title="Back" onClick={closePipelines}>
+          <ArrowLeft size={16} />
+        </button>
+        <div className="screen-header-title">
+          <h2>Pipelines</h2>
+          <span className="field-hint">Chain snippets with branching — run different steps depending on whether the previous one succeeded.</span>
+        </div>
         <button type="button" className="btn btn-small" onClick={() => openPipelineEditor(null)}>
           + New pipeline
         </button>
       </div>
-      <div className="modal-actions">
-        <button type="button" className="btn btn-primary" onClick={closePipelines}>
-          Done
-        </button>
+      <div className="screen-body no-scrollbar">
+        {pipelines.length === 0 ? (
+          <div className="variables-empty">No pipelines yet. Build a small graph of steps that branch on success/failure/output, then run it with one click.</div>
+        ) : (
+          <div className="groups-list">
+            {pipelines.map((p) => (
+              <div className="group-row" key={p.id}>
+                <div className="group-row-info">
+                  <div className="group-row-name">{p.name || '(untitled pipeline)'}</div>
+                  <div className="group-row-count">
+                    {p.nodes.length} step{p.nodes.length === 1 ? '' : 's'} · {p.edges.length} connection{p.edges.length === 1 ? '' : 's'}
+                  </div>
+                  {p.description && <div className="group-row-description">{p.description}</div>}
+                </div>
+                <button type="button" className="btn btn-small btn-primary" onClick={() => runSaved(p)}>
+                  <Play size={13} fill="currentColor" stroke="none" />
+                  <span>Run</span>
+                </button>
+                <button type="button" className="btn btn-small" onClick={() => openPipelineEditor(p)}>
+                  <Pencil size={13} />
+                  <span>Edit</span>
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
-    </div>
+    </>
   );
 }
 
@@ -377,9 +372,8 @@ function EditorView({ editingId }: { editingId: string | null }) {
     // <ReactFlow fitView> only ever fires once, on this component's first
     // mount — which for a brand-new pipeline happens against zero nodes (a
     // no-op). Without re-fitting here too, a step (and its connection
-    // handles) can land outside the visible, clipped canvas area at this
-    // app's compact 760×620 window size and never come back into view on
-    // their own — surfaced by this rewrite's own connection-dragging tests.
+    // handles) can land outside the visible, clipped canvas area and never
+    // come back into view on their own.
     setFitViewSignal((v) => v + 1);
   }
 
@@ -416,17 +410,21 @@ function EditorView({ editingId }: { editingId: string | null }) {
   }
 
   async function runFromEditor() {
-    pendingPipelineReturn = 'editor';
     closePipelines();
     await runPipelineGraph(nodes, edges);
     await persistSnippets({ silent: true });
   }
 
   return (
-    <div>
-      <div className="pipeline-editor-header">
-        <input type="text" id="pipelineNameInput" className="field-input" placeholder="Pipeline name" autoComplete="off" value={name} onChange={(e) => setName(e.target.value)} />
-        <input type="text" className="field-input" placeholder="Description (optional)" autoComplete="off" value={description} onChange={(e) => setDescription(e.target.value)} />
+    <>
+      <div className="screen-header">
+        <button type="button" className="icon-btn" title="Back to pipelines" onClick={showPipelinesListView}>
+          <ArrowLeft size={16} />
+        </button>
+        <div className="screen-header-title">
+          <input type="text" id="pipelineNameInput" className="field-input" placeholder="Pipeline name" autoComplete="off" value={name} onChange={(e) => setName(e.target.value)} />
+        </div>
+        <input type="text" className="field-input pipeline-description-input" placeholder="Description (optional)" autoComplete="off" value={description} onChange={(e) => setDescription(e.target.value)} />
       </div>
       <div className="pipeline-toolbar">
         <button
@@ -467,26 +465,25 @@ function EditorView({ editingId }: { editingId: string | null }) {
           openPicker={(anchor, items, emptyLabel, onPick) => setPicker({ anchor: anchor.getBoundingClientRect(), items, emptyLabel, onPick })}
         />
       </div>
-      <div className="modal-actions modal-actions-left">
-        {editingPipeline && (
+      <div className="screen-footer screen-footer-left">
+        {editingPipeline ? (
           <button type="button" className="btn btn-ghost btn-danger" onClick={remove}>
             Delete pipeline
           </button>
+        ) : (
+          <span />
         )}
-      </div>
-      <div className="modal-actions">
-        <button type="button" className="btn btn-ghost" onClick={showPipelinesListView}>
-          Cancel
-        </button>
-        <button type="button" className="btn" onClick={runFromEditor}>
-          Run
-        </button>
-        <button type="button" className="btn btn-primary" onClick={save}>
-          Save pipeline
-        </button>
+        <div className="modal-actions">
+          <button type="button" className="btn" onClick={runFromEditor}>
+            Run
+          </button>
+          <button type="button" className="btn btn-primary" onClick={save}>
+            Save pipeline
+          </button>
+        </div>
       </div>
       {picker && <SnippetPickerMenu picker={picker} onClose={() => setPicker(null)} />}
-    </div>
+    </>
   );
 }
 
@@ -494,9 +491,5 @@ export function PipelinesModal() {
   const { open, view, editingId } = usePipelinesStore();
   if (!open) return null;
 
-  return (
-    <div className="modal-overlay" onClick={(e) => { if (e.target === e.currentTarget && view === 'list') closePipelines(); }}>
-      <div className="modal modal-pipeline">{view === 'list' ? <ListView /> : <EditorView editingId={editingId} />}</div>
-    </div>
-  );
+  return <div className="screen">{view === 'list' ? <ListView /> : <EditorView editingId={editingId} />}</div>;
 }

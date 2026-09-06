@@ -44,12 +44,6 @@ dom.groupsBtn.addEventListener('click', openGroups);
 dom.settingsBtn.addEventListener('click', openSettings);
 dom.pipelinesBtn.addEventListener('click', openPipelines);
 
-dom.sortModeSelect.addEventListener('change', () => {
-  state.sortMode = dom.sortModeSelect.value;
-  localStorage.setItem('snippetRunner.sortMode', state.sortMode);
-  refresh();
-});
-
 dom.groupViewBtn.addEventListener('click', () => {
   state.groupView = !state.groupView;
   localStorage.setItem('snippetRunner.groupView', state.groupView ? '1' : '0');
@@ -67,7 +61,6 @@ window.electronAPI.onWindowShown(() => {
 window.electronAPI.onOpenHistoryRequest(() => openHistory());
 
 // --- Initial bootstrap ---
-dom.sortModeSelect.value = state.sortMode;
 dom.groupViewBtn.classList.toggle('active', state.groupView);
 applyAppearance();
 

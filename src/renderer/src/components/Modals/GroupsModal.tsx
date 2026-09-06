@@ -1,12 +1,19 @@
 // GroupsModal.tsx — named, saved sets of snippets ("groups") run together
-// on demand. Ported from modules/groups-modal.js: two views (list/editor)
-// inside one modal, same pattern as batch-runner.js's config/results.
-// Still calls straight into batch-runner.js's openBatchConfig (not yet
-// ported) to actually run a group — same as the original.
+// on demand. Renders as a full-window "screen" (see style.css's `.screen`
+// section) rather than a small centered `.modal` dialog — replaces the
+// snippet list for as long as it's open, with its own header Back button
+// rather than a dimmed-backdrop dialog you click outside of to dismiss.
+// Kept the component/file name (not renamed to GroupsScreen.tsx) to avoid
+// unrelated import churn, even though it's no longer modal-shaped.
+//
+// Two views (list/editor) in one screen, same list/editor split
+// PipelinesModal.tsx's own screen uses. Still calls straight into
+// batch-runner.js's openBatchConfig (not yet ported) to actually run a
+// group — same as the original.
 import { useState } from 'react';
-import { Play, Pencil } from 'lucide-react';
+import { ArrowLeft, Play, Pencil, Layers } from 'lucide-react';
 import type { Snippet, Group } from '@shared/types';
-import { snippetIcon, newId } from '../../lib/utils';
+import { snippetIcon, newId, tagColors } from '../../lib/utils';
 import { showToast } from '../../lib/toast';
 import { useSnippetsVersion, bumpSnippetsVersion } from '../../store/useSnippetsVersion';
 import { useGroupsStore, closeGroups, openGroupEditor, showGroupsListView } from '../../store/useGroupsStore';
@@ -23,27 +30,39 @@ function runGroup(group: Group) {
   openBatchConfig(list);
 }
 
-function GroupRow({ group }: { group: Group }) {
+function GroupCard({ group }: { group: Group }) {
   const snippets = state.snippets as Snippet[];
   const validCount = group.snippetIds.filter((id) => snippets.some((s) => s.id === id)).length;
+  // Groups don't carry their own icon/color in the data model — a
+  // hash-derived badge (same function Card.tsx uses for tag colors) gives
+  // each group a stable, distinct-enough look without adding a field.
+  const colors = tagColors(group.name || group.id);
+
   return (
-    <div className="group-row">
-      <div className="group-row-info">
-        <div className="group-row-name">{group.name || '(untitled group)'}</div>
-        <div className="group-row-count">
-          {validCount} snippet{validCount === 1 ? '' : 's'}
-          {validCount < group.snippetIds.length ? ' (some were deleted)' : ''}
+    <div className="group-card">
+      <div className="group-card-top">
+        <div className="group-card-icon" style={{ background: colors.bg, color: colors.fg }}>
+          <Layers size={16} />
         </div>
-        {group.description && <div className="group-row-description">{group.description}</div>}
+        <div className="group-card-title-group">
+          <div className="group-card-name">{group.name || '(untitled group)'}</div>
+          <div className="group-card-meta">
+            {validCount} snippet{validCount === 1 ? '' : 's'}
+            {validCount < group.snippetIds.length ? ' · some deleted' : ''}
+          </div>
+        </div>
       </div>
-      <button type="button" className="btn btn-small btn-primary" onClick={() => runGroup(group)}>
-        <Play size={13} fill="currentColor" stroke="none" />
-        <span>Run</span>
-      </button>
-      <button type="button" className="btn btn-small" onClick={() => openGroupEditor(group)}>
-        <Pencil size={13} />
-        <span>Edit</span>
-      </button>
+      {group.description && <div className="group-card-description">{group.description}</div>}
+      <div className="group-card-actions">
+        <button type="button" className="btn btn-small btn-primary" onClick={() => runGroup(group)}>
+          <Play size={13} fill="currentColor" stroke="none" />
+          <span>Run</span>
+        </button>
+        <button type="button" className="btn btn-small" onClick={() => openGroupEditor(group)}>
+          <Pencil size={13} />
+          <span>Edit</span>
+        </button>
+      </div>
     </div>
   );
 }
@@ -51,27 +70,31 @@ function GroupRow({ group }: { group: Group }) {
 function GroupsListView() {
   const groups = state.groups as Group[];
   return (
-    <div>
-      <h2>Groups</h2>
-      <p className="field-hint">Save a set of snippets once, then run them all together anytime — no reselecting.</p>
-      <div className="groups-list no-scrollbar">
-        {groups.length === 0 ? (
-          <div className="variables-empty">No groups yet. Save a set of snippets once, then run them all together with one click.</div>
-        ) : (
-          groups.map((g) => <GroupRow key={g.id} group={g} />)
-        )}
-      </div>
-      <div className="modal-actions modal-actions-left">
+    <>
+      <div className="screen-header">
+        <button type="button" className="icon-btn" title="Back" onClick={closeGroups}>
+          <ArrowLeft size={16} />
+        </button>
+        <div className="screen-header-title">
+          <h2>Groups</h2>
+          <span className="field-hint">Save a set of snippets once, then run them all together anytime — no reselecting.</span>
+        </div>
         <button type="button" className="btn btn-small" onClick={() => openGroupEditor(null)}>
           + New group
         </button>
       </div>
-      <div className="modal-actions">
-        <button type="button" className="btn btn-primary" onClick={closeGroups}>
-          Done
-        </button>
+      <div className="screen-body no-scrollbar">
+        {groups.length === 0 ? (
+          <div className="variables-empty">No groups yet. Save a set of snippets once, then run them all together with one click.</div>
+        ) : (
+          <div className="groups-grid">
+            {groups.map((g) => (
+              <GroupCard key={g.id} group={g} />
+            ))}
+          </div>
+        )}
       </div>
-    </div>
+    </>
   );
 }
 
@@ -114,58 +137,63 @@ function GroupEditorView({ editingId }: { editingId: string | null }) {
   }
 
   return (
-    <div>
-      <h2>{editingGroup ? 'Edit group' : 'New group'}</h2>
-      <label className="field-label" htmlFor="groupNameInput">Name</label>
-      <input type="text" id="groupNameInput" className="field-input" placeholder="e.g. Morning setup" autoComplete="off" value={name} onChange={(e) => setName(e.target.value)} autoFocus />
-
-      <label className="field-label" htmlFor="groupDescriptionInput">
-        Description <span className="field-hint">(optional)</span>
-      </label>
-      <textarea id="groupDescriptionInput" className="field-textarea" rows={2} placeholder="What this group is for, when to run it…" value={description} onChange={(e) => setDescription(e.target.value)} />
-
-      <label className="field-label">Snippets in this group</label>
-      <div className="group-snippet-checklist no-scrollbar">
-        {snippets.length === 0 ? (
-          <div className="variables-empty">No snippets yet — add some first.</div>
-        ) : (
-          snippets.map((s) => (
-            <label className="group-checklist-row" key={s.id}>
-              <input
-                type="checkbox"
-                checked={selectedIds.has(s.id)}
-                onChange={(e) => {
-                  const next = new Set(selectedIds);
-                  if (e.target.checked) next.add(s.id);
-                  else next.delete(s.id);
-                  setSelectedIds(next);
-                }}
-              />
-              <span className="group-checklist-label">
-                {snippetIcon(s)} {s.name}
-              </span>
-              <span className="group-checklist-tag">{s.tag}</span>
-            </label>
-          ))
-        )}
+    <>
+      <div className="screen-header">
+        <button type="button" className="icon-btn" title="Back to groups" onClick={showGroupsListView}>
+          <ArrowLeft size={16} />
+        </button>
+        <div className="screen-header-title">
+          <h2>{editingGroup ? 'Edit group' : 'New group'}</h2>
+        </div>
       </div>
+      <div className="screen-body no-scrollbar">
+        <label className="field-label" htmlFor="groupNameInput">Name</label>
+        <input type="text" id="groupNameInput" className="field-input" placeholder="e.g. Morning setup" autoComplete="off" value={name} onChange={(e) => setName(e.target.value)} autoFocus />
 
-      <div className="modal-actions modal-actions-left">
-        {editingGroup && (
+        <label className="field-label" htmlFor="groupDescriptionInput">
+          Description <span className="field-hint">(optional)</span>
+        </label>
+        <textarea id="groupDescriptionInput" className="field-textarea" rows={2} placeholder="What this group is for, when to run it…" value={description} onChange={(e) => setDescription(e.target.value)} />
+
+        <label className="field-label">Snippets in this group</label>
+        <div className="group-snippet-checklist no-scrollbar">
+          {snippets.length === 0 ? (
+            <div className="variables-empty">No snippets yet — add some first.</div>
+          ) : (
+            snippets.map((s) => (
+              <label className="group-checklist-row" key={s.id}>
+                <input
+                  type="checkbox"
+                  checked={selectedIds.has(s.id)}
+                  onChange={(e) => {
+                    const next = new Set(selectedIds);
+                    if (e.target.checked) next.add(s.id);
+                    else next.delete(s.id);
+                    setSelectedIds(next);
+                  }}
+                />
+                <span className="group-checklist-label">
+                  {snippetIcon(s)} {s.name}
+                </span>
+                <span className="group-checklist-tag">{s.tag}</span>
+              </label>
+            ))
+          )}
+        </div>
+      </div>
+      <div className="screen-footer screen-footer-left">
+        {editingGroup ? (
           <button type="button" className="btn btn-ghost btn-danger" onClick={remove}>
             Delete group
           </button>
+        ) : (
+          <span />
         )}
-      </div>
-      <div className="modal-actions">
-        <button type="button" className="btn btn-ghost" onClick={showGroupsListView}>
-          Cancel
-        </button>
         <button type="button" className="btn btn-primary" onClick={save}>
           Save group
         </button>
       </div>
-    </div>
+    </>
   );
 }
 
@@ -174,9 +202,5 @@ export function GroupsModal() {
   const { open, view, editingId } = useGroupsStore();
   if (!open) return null;
 
-  return (
-    <div className="modal-overlay" onClick={(e) => { if (e.target === e.currentTarget) closeGroups(); }}>
-      <div className="modal modal-wide">{view === 'list' ? <GroupsListView /> : <GroupEditorView editingId={editingId} />}</div>
-    </div>
-  );
+  return <div className="screen">{view === 'list' ? <GroupsListView /> : <GroupEditorView editingId={editingId} />}</div>;
 }

@@ -281,7 +281,9 @@ body {
 
 /* ThemedSelect.tsx (@radix-ui/react-select) — the trigger is a real element
    we lay out ourselves (flex row, icon as a normal child), so no overlay
-   trick is needed the way the native-<select> workaround below requires. */
+   trick is needed the way a plain native <select>'s unstylable arrow would
+   otherwise require (every <select> in the app is a ThemedSelect now — see
+   SortModeSelect.tsx, the last holdout, for that conversion). */
 .select-trigger {
   display: flex;
   align-items: center;
@@ -334,60 +336,52 @@ body {
   color: var(--accent);
 }
 
-/* Wraps a native <select> so we can draw our own theme-correct chevron and
-   hide the browser's own one — the native arrow doesn't respect our padding
-   and ends up looking slightly off-center against custom-styled selects.
-   Only the header's plain (non-React) sort-mode select still uses this —
-   every componentized <select> now uses ThemedSelect above instead. */
-.select-wrap {
+/* ThemedCombobox.tsx — same visual language as .select-content/.select-item
+   above, but a plain absolutely-positioned panel (no Radix Popper) since
+   this anchors directly under a real text input rather than a Select
+   trigger — see the component's own header comment for why. */
+.combobox {
   position: relative;
-  display: inline-flex;
-  align-items: center;
-  min-width: 0;
 }
 
-.select-wrap select {
-  appearance: none;
-  -webkit-appearance: none;
-  -moz-appearance: none;
-  padding-right: 26px;
-}
-
-.select-chevron {
+.combobox-content {
   position: absolute;
-  right: 9px;
-  top: 50%;
-  transform: translateY(-50%);
-  color: var(--text-tertiary);
-  pointer-events: none;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  max-height: 220px;
+  overflow-y: auto;
 }
 
-.select-chevron-sort {
-  right: 11px;
-}
-
-.sort-select {
-  flex-shrink: 0;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  color: var(--text-secondary);
+.combobox-item {
+  display: flex;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
   font-family: inherit;
-  font-size: 11.5px;
-  font-weight: 600;
-  border-radius: 999px;
-  padding: 6px 24px 6px 10px;
-  outline: none;
-  cursor: pointer;
 }
 
-.sort-select:hover {
-  border-color: var(--border-strong);
-  color: var(--text-primary);
+.combobox-item:hover,
+.combobox-item:focus-visible {
+  background: var(--surface-hover);
 }
 
-.sort-select:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
+.combobox-empty {
+  padding: 7px 9px;
+  font-size: 12.5px;
+  color: var(--text-tertiary);
+}
+
+/* SortModeSelect.tsx's mount point — the header's sort-order picker now
+   renders a full ThemedSelect (same look as the shell picker/every other
+   componentized <select>), not the old pill-shaped native <select> +
+   hand-drawn chevron overlay this used to be. Sized so it doesn't stretch
+   to fill the tag-filters row the way ThemedSelect's own 100%-width trigger
+   would by default. */
+.sort-select-mount {
+  flex-shrink: 0;
+  width: 150px;
 }
 
 /* ---------- Snippet list ---------- */
@@ -1115,37 +1109,23 @@ kbd {
   max-width: 520px;
 }
 
-.modal-pipeline {
-  width: 94vw;
-  max-width: 94vw;
-  max-height: 90vh;
-  display: flex;
-  flex-direction: column;
-}
-
-/* ---------- Pipeline editor ---------- */
-
-#pipelineEditorView {
-  display: flex;
-  flex-direction: column;
-  min-height: 0; /* let the body flex-shrink instead of overflowing the modal */
-}
-
-.pipeline-editor-header {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  margin-bottom: 8px;
-}
-.pipeline-editor-header .field-input {
-  flex: 1;
+/* ---------- Pipelines screen (PipelinesModal.tsx) ----------
+   Renders as .screen (see the Groups section above) — the list view reuses
+   .screen-header/.screen-body/.screen-footer directly; the editor view
+   below uses its own .pipeline-toolbar/.pipeline-editor-body instead of
+   .screen-body since the canvas+inspector need the full remaining height,
+   not a scrolling body. */
+.pipeline-description-input {
+  flex: 0 0 240px;
 }
 
 .pipeline-toolbar {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 8px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
 }
 
 .pipeline-toolbar-hint {
@@ -1156,7 +1136,8 @@ kbd {
   display: flex;
   gap: 10px;
   flex: 1;
-  min-height: 420px;
+  min-height: 0;
+  padding: 12px 16px;
 }
 
 .pipeline-canvas-wrap {
@@ -1785,6 +1766,23 @@ select.field-input {
   margin-top: 7px;
 }
 
+.history-output-chevron {
+  transition: transform 0.15s ease;
+}
+
+.history-output-chevron.open {
+  transform: rotate(180deg);
+}
+
+.history-item-output {
+  margin-top: 8px;
+}
+
+.history-item-output .card-output-body {
+  max-height: 220px;
+  font-size: 11.5px;
+}
+
 /* ---------- Toast ---------- */
 /* Rendered by sonner's <Toaster/> (App.tsx), `unstyled: true` — sonner owns
    position/stacking/enter-exit animation on the toast root itself, these
@@ -2210,7 +2208,144 @@ select.field-input {
   font-weight: 600;
 }
 
-/* ---------- Groups manager ---------- */
+/* ---------- Full-window "screens" (Groups) ----------
+   A screen fills the exact same bounds .app-shell does (same border/radius,
+   position:fixed;inset:0) rather than floating a small centered .modal over
+   a dimmed backdrop — it's meant to read as "the window's own content
+   changed", not as a transient dialog on top of it. Groups is the first
+   feature built this way (a card-gallery view doesn't fit a ~460px-wide
+   modal); PipelinesModal.tsx's list view stays .group-row-based (below)
+   since the editor itself moved out to its own OS window instead. */
+.screen {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-solid);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  animation: fade-in 0.15s ease both;
+}
+
+.screen-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 15px 16px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.screen-header-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.screen-header-title h2 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.screen-header-title .field-hint {
+  display: block;
+  margin-top: 2px;
+}
+
+.screen-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+}
+
+.screen-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.screen-footer-left {
+  justify-content: space-between;
+}
+
+.groups-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 10px;
+}
+
+.group-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 12px;
+  transition: border-color 0.15s ease;
+}
+
+.group-card:hover {
+  border-color: var(--border-strong);
+}
+
+.group-card-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.group-card-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-sm);
+  flex-shrink: 0;
+}
+
+.group-card-title-group {
+  min-width: 0;
+  flex: 1;
+}
+
+.group-card-name {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.group-card-meta {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  margin-top: 1px;
+}
+
+.group-card-description {
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.group-card-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: auto;
+  padding-top: 2px;
+}
+
+/* ---------- Groups manager (PipelinesModal.tsx's list view still uses this row look) ---------- */
 
 .groups-list {
   display: flex;

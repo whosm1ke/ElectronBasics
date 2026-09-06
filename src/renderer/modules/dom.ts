@@ -29,9 +29,6 @@ export const dom = {
   batchClearBtn: byId('batchClearBtn'),
   batchRunBtn: byId('batchRunBtn'),
 
-  // Tag filters (React-mounted) container's parent still owns sort
-  sortModeSelect: byId<HTMLSelectElement>('sortModeSelect'),
-
   // Snippet list
   snippetList: byId('snippetList'),
   emptyState: byId('emptyState'),
