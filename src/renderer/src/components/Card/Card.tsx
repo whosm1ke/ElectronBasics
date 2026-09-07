@@ -21,7 +21,7 @@ import { ParamForm } from './ParamForm';
 import { state } from '../../../modules/state';
 import { togglePin, duplicateSnippet, deleteSnippet, undoDelete } from '../../lib/snippetsStore';
 import { runSingleSnippet, runSequenceSnippet } from '../../lib/runEngine';
-import { syncVariablesFromValues } from '../../lib/variables';
+import { syncVariablesFromValues, refreshComputedVariablesFor } from '../../lib/variables';
 import { CardContextMenu } from './CardContextMenu';
 import { CopyAsDropdown } from './CopyAsDropdown';
 import { openModal } from '../../store/useEditorStore';
@@ -97,18 +97,23 @@ export function Card({ snippet, index, reorderable, selected, selectMode, select
     }
   }
 
-  function handleRunClick(e: React.MouseEvent) {
+  async function handleRunClick(e: React.MouseEvent) {
     e.stopPropagation();
     if (paramNames) return; // form already open — use its own Run button
     const names = extractPlaceholders(runnableTextOf(snippet));
     if (names.length > 0) {
+      // Refresh any COMPUTED variable among these names first, so the form
+      // ParamForm is about to prefill shows a live value instead of
+      // whatever manual/interval refresh last cached — see
+      // lib/variables.ts's own comment on why this matters.
+      await refreshComputedVariablesFor(names);
       setParamNames(names);
       return;
     }
     proceedRun(null);
   }
 
-  function handleStartStopClick(e: React.MouseEvent) {
+  async function handleStartStopClick(e: React.MouseEvent) {
     e.stopPropagation();
     if (isRunningStatus(state.runningProcesses[snippet.id]?.status)) {
       stopBackground(snippet);
@@ -116,7 +121,10 @@ export function Card({ snippet, index, reorderable, selected, selectMode, select
     }
     if (paramNames) return;
     const names = startBackground(snippet);
-    if (names.length > 0) setParamNames(names);
+    if (names.length > 0) {
+      await refreshComputedVariablesFor(names);
+      setParamNames(names);
+    }
   }
 
   // Shared by the Delete button and the context menu's Delete item — kept

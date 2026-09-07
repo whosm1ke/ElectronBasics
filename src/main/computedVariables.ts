@@ -9,6 +9,7 @@
 import { readVariables, writeVariables } from './storage/variables';
 import { readSnippets } from './storage/snippets';
 import { executeSnippetOnce } from './unattendedRun';
+import { getMainWindow } from './window';
 import type { Variable } from '@shared/types';
 
 const CHECK_INTERVAL_MS = 30 * 1000;
@@ -43,7 +44,17 @@ async function tickComputedVariables(): Promise<void> {
     variables[i] = await refreshOne(v);
     changed = true;
   }
-  if (changed) writeVariables(variables);
+  if (changed) {
+    const saved = writeVariables(variables);
+    // Unlike refreshComputedVariable() (an IPC call the renderer already
+    // gets the fresh list back from directly), nothing is waiting on this
+    // tick — without pushing it, the renderer's own state.variables would
+    // sit stale (still whatever it last fetched via getVariables()) until
+    // something else happened to reopen the Variables modal and re-fetch.
+    // A window can be legitimately absent (hidden at startup, or briefly
+    // during a hide/show cycle) — silently skip the push, not an error.
+    getMainWindow()?.webContents.send('variables-refreshed', saved);
+  }
 }
 
 export function startComputedVariablesTicker(): void {

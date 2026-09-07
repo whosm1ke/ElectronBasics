@@ -37,6 +37,7 @@ import { persistSnippets } from '../../lib/snippetsStore';
 import { runPipelineGraph } from '../../lib/pipelineEngine';
 import { useScreenOpenAnimation } from '../../lib/screenAnimation';
 import { openGroupEditor } from '../../store/useGroupsStore';
+import { refreshComputedVariablesFor } from '../../lib/variables';
 
 const JOIN_MODE_OPTIONS: [JoinMode, string][] = [
   ['any', 'Any incoming link (OR)'],
@@ -101,6 +102,9 @@ function usePipelineParamGate() {
       await persistSnippets({ silent: true });
       return;
     }
+    // See Card.tsx's own handleRunClick for why — a computed variable's
+    // prefill should reflect a live value, not a stale cached one.
+    await refreshComputedVariablesFor(names);
     const usedBy = collectPipelinePlaceholdersUsedBy(pipeline.nodes, state.snippets as Snippet[]);
     setGate({ nodes: pipeline.nodes, edges: pipeline.edges, maxConcurrency: pipeline.maxConcurrency, names, usedBy, closeScreenFirst });
   }

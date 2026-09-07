@@ -22,6 +22,7 @@ import { CSS } from '@dnd-kit/utilities';
 import { ShieldQuestion, Check, X } from 'lucide-react';
 import type { Snippet } from '@shared/types';
 import { snippetIcon, collectPlaceholders, collectPlaceholdersUsedBy } from '../../lib/utils';
+import { refreshComputedVariablesFor } from '../../lib/variables';
 import { showToast } from '../../lib/toast';
 import { ParamForm } from '../Card/ParamForm';
 import {
@@ -87,9 +88,12 @@ function ConfigView() {
     showToast(`Batch done: ${ran} ran${extras ? ` · ${extras}` : ''}`);
   }
 
-  function start() {
+  async function start() {
     const names = collectPlaceholders(order);
     if (names.length > 0) {
+      // See Card.tsx's own handleRunClick for why — a computed variable's
+      // prefill should reflect a live value, not a stale cached one.
+      await refreshComputedVariablesFor(names);
       setGateNames(names);
       return;
     }

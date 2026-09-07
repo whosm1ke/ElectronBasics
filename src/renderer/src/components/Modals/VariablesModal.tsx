@@ -3,7 +3,7 @@
 // from modules/variables-modal.js. Own full overlay (see HistoryDrawer.tsx's
 // header comment on why). Still reads/writes modules/state.js's
 // state.variables directly — see useVariablesStore.ts's header comment.
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Eye, Trash2, Link2, RefreshCw } from 'lucide-react';
 import type { Variable, Snippet, ComputedRefreshMode } from '@shared/types';
 import { newId } from '../../lib/utils';
@@ -85,6 +85,23 @@ function VariableRow({ variable, index }: { variable: Variable; index: number })
   const nameRef = useRef<HTMLInputElement>(null);
   const valueRef = useRef<HTMLInputElement>(null);
   const [computedOpen, setComputedOpen] = useState(Boolean(variable.computed));
+
+  // The value input below is deliberately uncontrolled (defaultValue, not
+  // value) — same reasoning as the name input right above it, avoiding a
+  // full re-render (and the resulting cursor-position reset) on every
+  // keystroke. That's fine while this input's own onChange is the only
+  // thing changing `variable.value`, but it means a change from OUTSIDE
+  // this input — a computed variable's manual/interval refresh replacing
+  // `state.variables` wholesale — never reaches the already-mounted DOM
+  // node, since React only reads `defaultValue` once, on first mount. This
+  // is exactly why "Refresh now" looked like it did nothing: the value WAS
+  // refreshed on disk, the input just never displayed it. Re-synced here
+  // instead, imperatively, only when `variable.value` actually changes —
+  // harmless during normal typing too, since by the time this re-renders
+  // (on blur) the DOM node's own .value already equals what's being set.
+  useEffect(() => {
+    if (valueRef.current && valueRef.current.value !== variable.value) valueRef.current.value = variable.value;
+  }, [variable.value]);
 
   return (
     <div className="variable-row-wrap">

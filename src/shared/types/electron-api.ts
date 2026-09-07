@@ -64,6 +64,8 @@ export interface ElectronAPI {
   getVariables(): Promise<Variable[]>;
   saveVariables(vars: Variable[]): Promise<Variable[]>;
   refreshComputedVariable(variableId: string): Promise<Variable[]>;
+  /** Fired whenever an 'interval'-mode computed variable is refreshed by the background ticker (main/computedVariables.ts) rather than a manual refreshComputedVariable() call — nothing else pushes the renderer's own state.variables back in sync with a change made in the background. */
+  onVariablesRefreshed(callback: (variables: Variable[]) => void): Unsubscribe;
 
   getGroups(): Promise<Group[]>;
   saveGroups(groups: Group[]): Promise<Group[]>;

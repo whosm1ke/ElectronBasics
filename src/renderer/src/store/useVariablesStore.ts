@@ -9,6 +9,17 @@ import { bumpSnippetsVersion } from './useSnippetsVersion';
 
 const useStore = create<{ open: boolean }>(() => ({ open: false }));
 
+// Subscribed once for the life of the app, same pattern useSettingsStore.ts
+// uses for its own onUpdateStatus push — a background interval-mode
+// computed-variable refresh (main/computedVariables.ts's ticker) has no
+// caller waiting on it the way a manual refresh does, so it has to push
+// state.variables back in sync itself rather than relying on the next
+// openVariables() call to happen to notice.
+window.electronAPI.onVariablesRefreshed((variables) => {
+  state.variables = variables;
+  bumpSnippetsVersion();
+});
+
 export function useVariablesOpen(): boolean {
   return useStore((s) => s.open);
 }

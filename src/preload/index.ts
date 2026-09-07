@@ -7,7 +7,7 @@
 // wrong param/return shape — is a compile-time type error here, not a
 // silent runtime mismatch discovered later in a renderer module.
 import { contextBridge, ipcRenderer } from 'electron';
-import type { ElectronAPI, UpdateStatusEvent, ProcessOutputEvent, ProcessStatusEvent } from '@shared/types';
+import type { ElectronAPI, UpdateStatusEvent, ProcessOutputEvent, ProcessStatusEvent, Variable } from '@shared/types';
 
 const electronAPI = {
   /** Executes a command in the main process under one of several shells. */
@@ -60,6 +60,13 @@ const electronAPI = {
 
   /** Manually refreshes one computed variable right now (runs its source snippet, captures stdout) and returns the full updated list. */
   refreshComputedVariable: (variableId) => ipcRenderer.invoke('refresh-computed-variable', variableId),
+
+  /** Fired whenever main/computedVariables.ts's own interval ticker refreshes an 'interval'-mode computed variable in the background — a manual refreshComputedVariable() call already gets its own fresh list back directly, but nothing's waiting on a background tick, so it has to be pushed instead. */
+  onVariablesRefreshed: (callback) => {
+    const listener = (_event: unknown, variables: Variable[]) => callback(variables);
+    ipcRenderer.on('variables-refreshed', listener);
+    return () => ipcRenderer.removeListener('variables-refreshed', listener);
+  },
 
   /** Loads the saved snippet groups (named sets of snippet ids, run together on demand). */
   getGroups: () => ipcRenderer.invoke('get-groups'),
